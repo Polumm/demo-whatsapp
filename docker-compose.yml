@@ -1,0 +1,45 @@
+version: "3.8"
+services:
+  rabbitmq:
+    image: rabbitmq:3.11-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"      # AMQP
+      - "15672:15672"    # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  chat-publisher:
+    build: ./chat-publisher
+    container_name: chat-publisher
+    depends_on:
+      - rabbitmq
+    environment:
+      RABBIT_HOST: rabbitmq
+      RABBIT_PORT: 5672
+      QUEUE_NAME: messages_queue
+    ports:
+      - "8001:8001"
+
+  chat-consumer:
+    build: ./chat-consumer
+    container_name: chat-consumer
+    depends_on:
+      - rabbitmq
+      - redis
+    environment:
+      RABBIT_HOST: rabbitmq
+      RABBIT_PORT: 5672
+      QUEUE_NAME: messages_queue
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "8002:8002"
