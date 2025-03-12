@@ -13,7 +13,7 @@ def store_in_redis(to_user, msg_data):
     """
     key = f"chat:{to_user}:{msg_data['timestamp']}"
     redis_client.set(key, json.dumps(msg_data))
-    print(f"[chat-consumer] ✅ Stored in Redis: {msg_data}")
+    print(f"[chat-consumer] Stored in Redis: {msg_data}")
 
 
 def process_message(ch, method, properties, body):
@@ -39,9 +39,9 @@ def process_message(ch, method, properties, body):
         store_in_redis(to_user, msg_data)
         # Acknowledge only after successful store
         ch.basic_ack(delivery_tag=method.delivery_tag)
-        print(f"[chat-consumer] ✅ Acknowledged message for {to_user}")
+        print(f"[chat-consumer] Acknowledged message for {to_user}")
     except Exception as e:
-        print(f"[chat-consumer] ❌ Error storing in Redis: {e}")
+        print(f"[chat-consumer] Error storing in Redis: {e}")
         # No ack => message stays in the queue to be retried
 
     # If user is online, deliver in real-time.
