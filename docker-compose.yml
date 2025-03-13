@@ -16,9 +16,9 @@ services:
     ports:
       - "6379:6379"
 
-  chat-publisher:
-    build: ./chat-publisher
-    container_name: chat-publisher
+  gateway-service:
+    build: ./gateway-service
+    container_name: gateway-service
     depends_on:
       - rabbitmq
     environment:
@@ -28,9 +28,9 @@ services:
     ports:
       - "8001:8001"
 
-  chat-consumer:
-    build: ./chat-consumer
-    container_name: chat-consumer
+  chat-service:
+    build: ./chat-service
+    container_name: chat-service
     depends_on:
       - rabbitmq
       - redis
