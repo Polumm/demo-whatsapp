@@ -10,7 +10,6 @@ from pydantic import BaseModel
 import jwt
 import datetime
 from functools import wraps
-from typing import Dict
 import uvicorn
 
 app = FastAPI()
@@ -31,12 +30,15 @@ FAKE_DB = {
 # Token authentication scheme
 security = HTTPBearer()
 
+
 class LoginRequest(BaseModel):
     username: str
     password: str
 
 
-def create_token(user_id: str, role: str, secret_key: str, expires_delta: datetime.timedelta):
+def create_token(
+    user_id: str, role: str, secret_key: str, expires_delta: datetime.timedelta
+):
     payload = {
         "sub": user_id,
         "role": role,
@@ -71,7 +73,9 @@ def _extract_jwt(request: Request = None, websocket: WebSocket = None):
         token = websocket.headers.get("sec-websocket-protocol")
 
     if not token:
-        raise HTTPException(status_code=401, detail="Authorization token missing or invalid")
+        raise HTTPException(
+            status_code=401, detail="Authorization token missing or invalid"
+        )
     return token
 
 
@@ -90,18 +94,28 @@ def role_required(*allowed_roles):
     Decorator to enforce role-based authentication for both HTTP and WebSocket endpoints.
     Stores the decoded token in request.state.token_data or websocket.state.token_data.
     """
+
     def decorator(endpoint_func):
         @wraps(endpoint_func)
-        async def wrapper(*args, request: Request = None, websocket: WebSocket = None, **kwargs):
+        async def wrapper(
+            *args,
+            request: Request = None,
+            websocket: WebSocket = None,
+            **kwargs,
+        ):
             token = _extract_jwt(request, websocket)
             decoded_token = verify_token(token, ACCESS_SECRET_KEY)
 
             user_role = decoded_token.get("role")
             if not user_role:
-                raise HTTPException(status_code=401, detail="Invalid token payload")
+                raise HTTPException(
+                    status_code=401, detail="Invalid token payload"
+                )
 
             if user_role not in allowed_roles:
-                raise HTTPException(status_code=403, detail="Insufficient role")
+                raise HTTPException(
+                    status_code=403, detail="Insufficient role"
+                )
 
             # Attach decoded token to request or websocket, so the endpoint can retrieve it.
             if request is not None:
@@ -109,9 +123,12 @@ def role_required(*allowed_roles):
                 return await endpoint_func(request=request, *args, **kwargs)
             else:
                 websocket.state.token_data = decoded_token
-                return await endpoint_func(websocket=websocket, *args, **kwargs)
+                return await endpoint_func(
+                    websocket=websocket, *args, **kwargs
+                )
 
         return wrapper
+
     return decorator
 
 
@@ -130,6 +147,7 @@ async def login(data: LoginRequest):
 # Protected Endpoints
 # ---------------------------
 
+
 @app.websocket("/ws")
 @role_required("admin", "user")
 async def websocket_endpoint(websocket: WebSocket):
@@ -143,7 +161,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # No subprotocol negotiation, just accept the socket
     await websocket.accept()
-    await websocket.send_text(f"Welcome {user_id}! You have {user_role} access.")
+    await websocket.send_text(
+        f"Welcome {user_id}! You have {user_role} access."
+    )
     try:
         while True:
             msg = await websocket.receive_text()
@@ -161,7 +181,9 @@ async def admin_endpoint(request: Request):
     """
     token_data = request.state.token_data
     user_id = token_data["sub"]
-    return {"message": f"Hello, Admin (user_id={user_id})! You have admin access."}
+    return {
+        "message": f"Hello, Admin (user_id={user_id})! You have admin access."
+    }
 
 
 @app.get("/user")
@@ -184,7 +206,6 @@ async def public_endpoint():
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000, reload=False)
-
 
 
 # uvicorn tests.demo-jwt:app --host 127.0.0.1 --port 8000 --reload
