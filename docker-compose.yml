@@ -15,6 +15,19 @@ services:
     container_name: redis
     ports:
       - "6379:6379"
+  
+  postgres:
+    image: postgres:latest
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: demo_whatsapp
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
   gateway-service:
     build: ./gateway-service
@@ -22,9 +35,11 @@ services:
     depends_on:
       - rabbitmq
     environment:
+      PYTHONUNBUFFERED: 1
       RABBIT_HOST: rabbitmq
       RABBIT_PORT: 5672
       QUEUE_NAME: messages_queue
+      AUTH_SERVICE_URL: "http://auth-service:8003"
     ports:
       - "8001:8001"
 
@@ -44,3 +59,18 @@ services:
       REDIS_PORT: 6379
     ports:
       - "8002:8002"
+
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    depends_on:
+      - postgres
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql://user:password@postgres:5432/demo_whatsapp
+      ACCESS_SECRET_KEY: "access_secret_key"
+    ports:
+      - "8003:8003"
+
+volumes:
+  postgres_data:

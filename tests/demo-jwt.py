@@ -198,10 +198,10 @@ async def user_endpoint(request: Request):
     return {"message": f"Hello, {user_id}! You have user access."}
 
 
-# Public, no auth required
-@app.get("/")
-async def public_endpoint():
-    return {"message": "Welcome to the public API!"}
+    # Public, no auth required
+    @app.get("/")
+    async def public_endpoint():
+        return {"message": "Welcome to the public API!"}
 
 
 if __name__ == "__main__":

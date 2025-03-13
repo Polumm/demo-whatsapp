@@ -1,14 +1,16 @@
 import time
-from fastapi import APIRouter, WebSocket
 import asyncio
 import json
+from dependencies import role_required
+from fastapi import APIRouter, WebSocket
 
 from dependencies import publish_message
 
 router = APIRouter()
 
 
-@router.websocket("/ws/send")
+@router.websocket("/send/ws")
+@role_required("admin", "user")
 async def websocket_send(websocket: WebSocket):
     """
     WebSocket connection for sending messages to RabbitMQ in real-time.

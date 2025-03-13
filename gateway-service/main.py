@@ -1,9 +1,13 @@
 from fastapi import FastAPI
 import uvicorn
-from routes.websocket import router as websocket_router
+from routes.send import router as send_msg_router
+from routes.auth import router as auth_router
 
 app = FastAPI()
-app.include_router(websocket_router)
+
+# Include routers
+app.include_router(send_msg_router)
+app.include_router(auth_router, prefix="/api")
 
 
 @app.get("/")
@@ -13,4 +17,4 @@ async def health_check():
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True, log_level="debug")

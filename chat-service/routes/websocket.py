@@ -1,5 +1,6 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Dict
+from dependencies import role_required
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 router = APIRouter()
 
@@ -8,6 +9,7 @@ connected_users: Dict[str, WebSocket] = {}
 
 
 @router.websocket("/ws/{user_id}")
+@role_required("admin", "user")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await websocket.accept()
     connected_users[user_id] = websocket
