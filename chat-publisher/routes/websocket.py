@@ -1,3 +1,4 @@
+import time
 from fastapi import APIRouter, WebSocket
 import asyncio
 import json
@@ -29,6 +30,7 @@ async def websocket_send(websocket: WebSocket):
                 )
                 continue
 
+            message_dict["timestamp"] = int(time.time() * 1000)
             # 2) Publish the Python dict directly
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, publish_message, message_dict)
