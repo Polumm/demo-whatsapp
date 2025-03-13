@@ -17,12 +17,10 @@ app = FastAPI()
 
 # Secret keys for encoding/decoding JWT
 ACCESS_SECRET_KEY = "access_secret_key"
-REFRESH_SECRET_KEY = "refresh_secret_key"
 ALGORITHM = "HS256"
 
 # Token expiration times
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
-REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 # Simulated database: username -> {"password": str, "role": str}
 FAKE_DB = {
@@ -32,10 +30,6 @@ FAKE_DB = {
 
 # Token authentication scheme
 security = HTTPBearer()
-
-# Store refresh tokens for invalidation on logout
-refresh_token_store: Dict[str, str] = {}
-
 
 class LoginRequest(BaseModel):
     username: str
@@ -58,16 +52,8 @@ def generate_tokens(user_id: str, role: str):
         ACCESS_SECRET_KEY,
         datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
-    refresh_token = create_token(
-        user_id,
-        role,
-        REFRESH_SECRET_KEY,
-        datetime.timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
-    )
 
-    # Store the refresh token (simulating a DB or cache)
-    refresh_token_store[user_id] = refresh_token
-    return {"access_token": access_token, "refresh_token": refresh_token}
+    return {"access_token": access_token}
 
 
 def _extract_jwt(request: Request = None, websocket: WebSocket = None):
