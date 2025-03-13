@@ -1,8 +1,10 @@
 version: "3.8"
+
 services:
   rabbitmq:
     image: rabbitmq:3.11-management
     container_name: rabbitmq
+    restart: always  # Ensure RabbitMQ restarts if it fails
     ports:
       - "5672:5672"      # AMQP
       - "15672:15672"    # Management UI
@@ -13,6 +15,7 @@ services:
   redis:
     image: redis:latest
     container_name: redis
+    restart: always
     ports:
       - "6379:6379"
   
@@ -32,6 +35,7 @@ services:
   gateway-service:
     build: ./gateway-service
     container_name: gateway-service
+    restart: always
     depends_on:
       - rabbitmq
     environment:
@@ -46,6 +50,7 @@ services:
   chat-service:
     build: ./chat-service
     container_name: chat-service
+    restart: always
     depends_on:
       - rabbitmq
       - redis
@@ -54,7 +59,6 @@ services:
       RABBIT_HOST: rabbitmq
       RABBIT_PORT: 5672
       QUEUE_NAME: messages_queue
-
       REDIS_HOST: redis
       REDIS_PORT: 6379
     ports:
@@ -63,6 +67,7 @@ services:
   auth-service:
     build: ./auth-service
     container_name: auth-service
+    restart: always
     depends_on:
       - postgres
     environment:
