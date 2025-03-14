@@ -1,25 +1,47 @@
 import pika
 import json
 import time
+import asyncio
+
 from dependencies import create_consumer_connection, redis_client
 from services.notifications import send_push_notification
 from routes.websocket import connected_users
 from config import QUEUE_NAME
 
+###########################
+# Global reference to main event loop
+###########################
+MAIN_LOOP = None  # We will set this at startup in main.py
 
+
+def set_main_loop(loop: asyncio.AbstractEventLoop):
+    """
+    Called once at application startup, so the consumer code knows which
+    event loop to schedule coroutines on. This avoids the "no current event loop" error.
+    """
+    global MAIN_LOOP
+    MAIN_LOOP = loop
+    print("[chat-consumer] MAIN_LOOP set successfully.")
+
+
+###########################
+# The main logic
+###########################
 def store_in_redis(to_user, msg_data):
     """
-    Simple example: store under 'chat:{to_user}:{timestamp}'.
+    Simple example: store under 'chat:{to_user}:{timestamp}' in Redis.
     """
-    key = f"chat:{to_user}:{msg_data['timestamp']}"
+    key = (
+        f"chat:{to_user}:{msg_data.get('timestamp', int(time.time() * 1000))}"
+    )
     redis_client.set(key, json.dumps(msg_data))
     print(f"[chat-consumer] Stored in Redis: {msg_data}")
 
 
 def process_message(ch, method, properties, body):
     """
-    Process a single RabbitMQ message: parse JSON, store in Redis, ack, etc.
-    (Runs in the blocking pika callback.)
+    Parse JSON, store in Redis, ack if successful.
+    If user is online, schedule a coroutine to deliver real-time on MAIN_LOOP.
     """
     msg_str = body.decode("utf-8")
     print(f"[chat-consumer] Received raw message: {msg_str}")
@@ -34,6 +56,23 @@ def process_message(ch, method, properties, body):
 
     to_user = msg_data.get("toUser")
 
+    # If user is online, schedule real-time delivery
+    if to_user in connected_users:
+        ws = connected_users[to_user]
+        # Schedule the async send on the main event loop via run_coroutine_threadsafe
+        if MAIN_LOOP:
+            future = asyncio.run_coroutine_threadsafe(
+                _deliver_message(ws, msg_data), MAIN_LOOP
+            )
+            # future.result()  # Not necessary; we can let it run in background
+        else:
+            print(
+                "[chat-consumer] Warning: MAIN_LOOP not set, can't deliver real-time."
+            )
+    else:
+        # If offline => push
+        send_push_notification(to_user, msg_data)
+
     # Attempt to store in Redis
     try:
         store_in_redis(to_user, msg_data)
@@ -42,30 +81,33 @@ def process_message(ch, method, properties, body):
         print(f"[chat-consumer] Acknowledged message for {to_user}")
     except Exception as e:
         print(f"[chat-consumer] Error storing in Redis: {e}")
-        # No ack => message stays in the queue to be retried
-
-    # If user is online, deliver in real-time.
-    # (Optional) If you're doing real-time notifications in the consumer:
-    if to_user in connected_users:
-        ws = connected_users[to_user]
-        # Because we're in a blocking thread, we can't await ws.send_text().
-        # But you can schedule it on the main event loop if you want.
-        # For a simple example, do a quick hacky approach:
-        import asyncio
-
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(ws.send_text(json.dumps(msg_data)))
-        loop.close()
-        print(f"[chat-consumer] Delivered real-time to {to_user}.")
-    else:
-        # offline => push
-        send_push_notification(to_user, msg_data)
+        # No ack => message remains in queue for retry
 
 
+###########################
+# The async routine for real-time delivery
+###########################
+async def _deliver_message(ws, msg_data):
+    """
+    Coroutine that sends the message to the user's WebSocket.
+    Scheduled from the blocking thread using run_coroutine_threadsafe(...).
+    """
+    try:
+        await ws.send_text(json.dumps(msg_data))
+        print(
+            f"[chat-consumer] Delivered real-time to {msg_data.get('toUser')}."
+        )
+    except Exception as e:
+        print("[chat-consumer] Failed sending to WebSocket:", e)
+
+
+###########################
+# The main blocking consumer loop
+###########################
 def blocking_consume():
     """
-    Runs a synchronous loop that connects to RabbitMQ, starts consuming,
-    and reconnects on failure. Runs in a separate thread from FastAPI.
+    Connects to RabbitMQ, starts a blocking consume, auto-reconnect on failure.
+    This runs in a separate thread from FastAPI.
     """
     retry_delay = 1
     while True:
@@ -78,7 +120,7 @@ def blocking_consume():
             channel.basic_consume(
                 queue=QUEUE_NAME,
                 on_message_callback=process_message,
-                auto_ack=False,
+                auto_ack=False,  # We do manual ack in process_message
             )
 
             print("[chat-consumer] Waiting for messages (blocking consume)...")

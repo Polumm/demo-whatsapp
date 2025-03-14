@@ -36,14 +36,10 @@ services:
     build: ./gateway-service
     container_name: gateway-service
     restart: always
-    depends_on:
-      - rabbitmq
     environment:
       PYTHONUNBUFFERED: 1
-      RABBIT_HOST: rabbitmq
-      RABBIT_PORT: 5672
-      QUEUE_NAME: messages_queue
-      AUTH_SERVICE_URL: "http://auth-service:8003"
+      CHAT_SERVICE_URL: "chat-service:8002"
+      AUTH_SERVICE_URL: "auth-service:8003"
     ports:
       - "8001:8001"
 
@@ -56,13 +52,14 @@ services:
       - redis
     environment:
       PYTHONUNBUFFERED: 1
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       RABBIT_HOST: rabbitmq
       RABBIT_PORT: 5672
       QUEUE_NAME: messages_queue
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-    ports:
-      - "8002:8002"
+    # # Whether user can connect gateway-service directly
+    # ports:
+    #   - "8002:8002" 
 
   auth-service:
     build: ./auth-service
@@ -74,8 +71,8 @@ services:
       APP_ENV: development
       DATABASE_URL: postgresql://user:password@postgres:5432/demo_whatsapp
       ACCESS_SECRET_KEY: "access_secret_key"
-    ports:
-      - "8003:8003"
+    # ports:
+    #   - "8003:8003"
 
 volumes:
   postgres_data:

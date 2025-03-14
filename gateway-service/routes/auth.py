@@ -20,7 +20,7 @@ class RegisterRequest(BaseModel):
 @router.post("/login")
 def login(request: LoginRequest):
     """Forwards login request to auth-service and returns JWT token."""
-    response = requests.post(f"{AUTH_SERVICE_URL}/login", json=request.model_dump())
+    response = requests.post(f"http://{AUTH_SERVICE_URL}/login", json=request.model_dump())
 
     if response.status_code == 200:
         return response.json()  # Forward JWT token to frontend
@@ -31,7 +31,7 @@ def login(request: LoginRequest):
 def register(request: RegisterRequest):
     """Forwards register request to auth-service and returns success message."""
     response = requests.post(
-        f"{AUTH_SERVICE_URL}/register", json=request.model_dump()
+        f"http://{AUTH_SERVICE_URL}/register", json=request.model_dump()
     )
 
     if response.status_code == 200:

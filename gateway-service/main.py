@@ -1,13 +1,14 @@
 from fastapi import FastAPI
 import uvicorn
-from routes.send import router as send_msg_router
+
 from routes.auth import router as auth_router
+from routes.chat import router as chat_router
 
 app = FastAPI()
 
 # Include routers
-app.include_router(send_msg_router)
 app.include_router(auth_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
 
 
 @app.get("/")
