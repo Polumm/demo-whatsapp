@@ -1,48 +1,55 @@
-from fastapi import FastAPI
 import uvicorn
-import threading
 import asyncio
+import threading
 from contextlib import asynccontextmanager
+from fastapi import FastAPI
+import os
 
+from models import Base
+from dependencies import engine
+from routes.conversations import router as convo_router
 from routes.websocket import router as websocket_router
 from consumers.consumer import blocking_consume, set_main_loop
 
+# Get environment mode
+APP_ENV = os.getenv("APP_ENV", "development")
+
+def create_tables():
+    """Creates database tables only in development mode (avoid in production)."""
+    if APP_ENV == "development":
+        print("[chat-service] Running in development mode: Creating tables...")
+        Base.metadata.create_all(bind=engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Replaces the deprecated @app.on_event("startup") approach.
-    1) Acquire resources at startup
-    2) Release them on shutdown
-    """
-    # 1) STARTUP
-    # Capture the main event loop used by FastAPI
+    """Handles app startup and shutdown lifecycle."""
+    # Set event loop for consumer (if needed)
     loop = asyncio.get_running_loop()
     set_main_loop(loop)
 
-    # Start the blocking RabbitMQ consumer in a separate thread
-    thread = threading.Thread(target=blocking_consume, daemon=True)
-    thread.start()
-    print("[chat-service] Background consumer thread started.")
+    # Create tables only in development mode
+    create_tables()
 
-    # Yield control so the app can start serving requests
-    yield
+    # Prevent multiple consumer threads
+    if "consumer_thread" not in globals():
+        global consumer_thread
+        consumer_thread = threading.Thread(target=blocking_consume, daemon=True)
+        consumer_thread.start()
+        print("[chat-service] blocking_consume started in background thread.")
 
-    # 2) SHUTDOWN
+    yield  # Runs while the app is running
+
     print("[chat-service] Shutting down...")
-    # (If you need to signal the consumer thread to stop, do that here.)
-    # The thread will be killed when the process ends, or you can join it if you want.
 
-
-# Create the app using the lifespan context manager
+# Initialize FastAPI app with lifespan manager
 app = FastAPI(lifespan=lifespan)
 app.include_router(websocket_router)
-
+app.include_router(convo_router, tags=["conversations"])
 
 @app.get("/")
 def health_check():
+    """Health check endpoint."""
     return {"status": "chat-service OK"}
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8002, reload=True)

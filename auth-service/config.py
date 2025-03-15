@@ -15,5 +15,5 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(
 
 # Database Config
 DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql://user:password@postgres:5432/demo_whatsapp"
+    "DATABASE_URL", "postgresql://authuser:authpass@postgres-auth:5432/authdb"
 )

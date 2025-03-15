@@ -4,3 +4,7 @@ websockets
 pika
 redis
 pyjwt
+sqlalchemy
+psycopg2-binary
+pytest
+httpx

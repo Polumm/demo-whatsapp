@@ -8,10 +8,12 @@ import uuid
 
 router = APIRouter()
 
+
 class RegisterRequest(BaseModel):
     username: str
     password: str
     role: str
+
 
 @router.post("/register")
 def register_user(data: RegisterRequest, db: Session = Depends(get_db)):
@@ -26,10 +28,15 @@ def register_user(data: RegisterRequest, db: Session = Depends(get_db)):
         id=uuid.uuid4(),
         name=data.username,
         password=hash_password(data.password),
-        role=data.role
+        role=data.role,
     )
+
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
 
-    return {"message": "User registered successfully"}
+    return {
+        "message": "User registered successfully",
+        "user_id": str(new_user.id),
+        "created_at": new_user.created_at,
+    }

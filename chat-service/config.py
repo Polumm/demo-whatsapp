@@ -9,3 +9,8 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_SECRET_KEY = os.getenv("ACCESS_SECRET_KEY", "access_secret_key")
+
+# Database Config
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql://chatuser:chatpass@postgres-chat:5432/chatdb"
+)
