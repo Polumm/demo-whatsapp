@@ -8,3 +8,5 @@ sqlalchemy
 psycopg2-binary
 pytest
 httpx
+asyncio
+pytest-asyncio

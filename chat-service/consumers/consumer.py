@@ -3,7 +3,8 @@ import json
 import time
 import asyncio
 
-from dependencies import create_consumer_connection, redis_client
+from dependencies import create_consumer_connection, get_group_members
+from dependencies import store_message_in_redis, store_message_in_postgres
 from services.notifications import send_push_notification
 from routes.websocket import connected_users
 from config import QUEUE_NAME
@@ -27,61 +28,75 @@ def set_main_loop(loop: asyncio.AbstractEventLoop):
 ###########################
 # The main logic
 ###########################
-def store_in_redis(to_user, msg_data):
-    """
-    Simple example: store under 'chat:{to_user}:{timestamp}' in Redis.
-    """
-    key = (
-        f"chat:{to_user}:{msg_data.get('timestamp', int(time.time() * 1000))}"
-    )
-    redis_client.set(key, json.dumps(msg_data))
-    print(f"[chat-consumer] Stored in Redis: {msg_data}")
-
 
 def process_message(ch, method, properties, body):
     """
-    Parse JSON, store in Redis, ack if successful.
-    If user is online, schedule a coroutine to deliver real-time on MAIN_LOOP.
+    1) Parse JSON
+    2) If direct => toUser? If group => membership?
+    3) Acknowledge
+    4) Real-time deliver
+    5) Store in Redis, Postgres asynchronously
     """
+
     msg_str = body.decode("utf-8")
     print(f"[chat-consumer] Received raw message: {msg_str}")
 
+    # parse JSON
     try:
         msg_data = json.loads(msg_str)
-        print(f"[chat-consumer] Parsed message: {msg_data}")
     except json.JSONDecodeError as e:
         print("[chat-consumer] JSON parse error:", e)
-        ch.basic_ack(delivery_tag=method.delivery_tag)
+        if method is not None:
+            ch.basic_ack(delivery_tag=method.delivery_tag)
         return
 
-    to_user = msg_data.get("toUser")
-
-    # If user is online, schedule real-time delivery
-    if to_user in connected_users:
-        ws = connected_users[to_user]
-        # Schedule the async send on the main event loop via run_coroutine_threadsafe
-        if MAIN_LOOP:
-            future = asyncio.run_coroutine_threadsafe(
-                _deliver_message(ws, msg_data), MAIN_LOOP
-            )
-            # future.result()  # Not necessary; we can let it run in background
-        else:
-            print(
-                "[chat-consumer] Warning: MAIN_LOOP not set, can't deliver real-time."
-            )
-    else:
-        # If offline => push
-        send_push_notification(to_user, msg_data)
-
-    # Attempt to store in Redis
-    try:
-        store_in_redis(to_user, msg_data)
-        # Acknowledge only after successful store
+    # Acknowledge
+    if method is not None:
         ch.basic_ack(delivery_tag=method.delivery_tag)
-        print(f"[chat-consumer] Acknowledged message for {to_user}")
-    except Exception as e:
-        print(f"[chat-consumer] Error storing in Redis: {e}")
-        # No ack => message remains in queue for retry
+    else:
+        print("[chat-consumer] WARNING: method is None, cannot ack")
+
+    # Real-time delivery
+    to_user = msg_data.get("toUser")
+    if to_user:
+        # direct chat
+        ws = connected_users.get(to_user)
+        if ws and MAIN_LOOP:
+            future = asyncio.run_coroutine_threadsafe(_deliver_message(ws, msg_data), MAIN_LOOP)
+        else:
+            # offline => push
+            if MAIN_LOOP:
+                asyncio.run_coroutine_threadsafe(send_push_notification(to_user, msg_data), MAIN_LOOP)
+    else:
+        # group scenario => membership
+        participants = get_group_members(msg_data["conversation_id"])
+        # let's do a function for real-time broadcast
+        async def group_broadcast():
+            for p in participants:
+                if p in connected_users:
+                    await _deliver_message(connected_users[p], msg_data)
+                else:
+                    await send_push_notification(p, msg_data)
+
+        if MAIN_LOOP:
+            asyncio.run_coroutine_threadsafe(group_broadcast(), MAIN_LOOP)
+
+    # now do the storage tasks
+    async def storage_tasks():
+        try:
+            await store_message_in_redis(msg_data)
+        except Exception as e:
+            print("[chat-consumer] Redis store error:", e)
+
+        try:
+            await store_message_in_postgres(msg_data)
+        except Exception as e:
+            print("[chat-consumer] Postgres store error:", e)
+
+    if MAIN_LOOP:
+        asyncio.run_coroutine_threadsafe(storage_tasks(), MAIN_LOOP)
+    else:
+        print("[chat-consumer] WARNING: no MAIN_LOOP, can't do storage tasks")
 
 
 ###########################
@@ -137,3 +152,11 @@ def blocking_consume():
         except Exception as e:
             print("[chat-consumer] Consumer crashed:", e, "Retrying in 5s...")
             time.sleep(5)
+
+
+# def get_group_members(conversation_id: str):
+#     """
+#     Placeholder function for group membership. In real code, you'd query DB or a cache.
+#     """
+#     print("[chat-consumer] get_group_members called.")
+#     return ["Bob", "Charlie", "Dave"]  # example

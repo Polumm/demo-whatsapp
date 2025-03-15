@@ -1,20 +1,36 @@
-import jwt
 import json
 import pika
 import redis
-from functools import wraps
 from config import (
     RABBIT_HOST,
     RABBIT_PORT,
     QUEUE_NAME,
     REDIS_HOST,
     REDIS_PORT,
-    ACCESS_SECRET_KEY,
-    ALGORITHM,
 )
-from fastapi import Request, WebSocket, HTTPException
-from typing import Optional
 from fastapi import HTTPException
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from config import DATABASE_URL
+from sqlalchemy.orm import Session
+from models import Message
+import uuid
+from sqlalchemy.orm import Session
+from models import UsersConversation
+
+engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+def get_db():
+    """
+    Dependency for database session management.
+    Ensures connections are opened/closed properly.
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 
 # Redis connection
 redis_client = redis.Redis(
@@ -54,19 +70,77 @@ def publish_message(message_dict):
         )
 
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from config import DATABASE_URL
+async def store_message_in_redis(msg):
+    """
+    Stores a message in Redis using Sorted Sets (ZADD).
+    Messages are sorted by 'sent_at' timestamp for efficient retrieval.
+    """
+    cid = msg["conversation_id"]
+    message_json = json.dumps(msg)
+    
+    # Use 'sent_at' as the score to ensure messages are sorted by time
+    redis_client.zadd(f"chat:{cid}:messages", {message_json: msg["sent_at"]})
 
-engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-def get_db():
+    # Optional: Remove older messages beyond a threshold (e.g., keep last 100)
+    redis_client.zremrangebyrank(f"chat:{cid}:messages", 0, -101)  # Keeps last 100 messages
+
+
+async def get_recent_messages(conversation_id, count=50):
     """
-    Dependency for database session management.
-    Ensures connections are opened/closed properly.
+    Fetches the last 'count' messages from Redis for a given conversation.
+    Retrieves them in correct chronological order (oldest to newest).
     """
-    db = SessionLocal()
+    messages = redis_client.zrange(f"chat:{conversation_id}:messages", -count, -1)  # Get latest 'count' messages
+    return [json.loads(msg) for msg in messages]  # Convert JSON back to Python dict
+
+
+async def get_messages_in_time_range(conversation_id, start_time, end_time):
+    """
+    Fetches messages from Redis in a specific time range (sorted by timestamp).
+    """
+    messages = redis_client.zrangebyscore(
+        f"chat:{conversation_id}:messages",
+        start_time,  # Start timestamp
+        end_time  # End timestamp
+    )
+    return [json.loads(msg) for msg in messages]
+
+
+async def store_message_in_postgres(msg_data):
+    """
+    Stores the message in Postgres.
+    """
     try:
-        yield db
-    finally:
-        db.close()
+        db: Session = next(get_db())  # Get a DB session
+
+        new_message = Message(
+            id=uuid.uuid4(),
+            conversation_id=msg_data["conversation_id"],
+            user_id=msg_data["sender_id"],
+            content=msg_data["content"],
+            type=msg_data["type"],
+            sent_at=msg_data["sent_at"],
+        )
+
+        db.add(new_message)
+        db.commit()
+        print(f"[chat-consumer] Stored message in Postgres: {msg_data}")
+
+    except Exception as e:
+        print(f"[chat-consumer] Error storing message in Postgres: {e}")
+        
+
+def get_group_members(conversation_id: str):
+    """
+    Retrieves user_ids from the users_conversation table for the given conversation.
+    """
+    db: Session = next(get_db())  # yields a session
+    members = db.query(UsersConversation.user_id)\
+                .filter(UsersConversation.conversation_id == conversation_id)\
+                .all()  # returns list of (user_id,)
+
+    # each row is a tuple like (UUID(...),), so we flatten:
+    user_ids = [row[0] for row in members]
+    db.close()
+    print(f"[chat-consumer] get_group_members called for {conversation_id}, found {user_ids}")
+    return user_ids

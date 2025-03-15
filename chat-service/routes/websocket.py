@@ -1,5 +1,7 @@
 import asyncio
 import json
+from datetime import datetime
+from datetime import timezone
 from typing import Dict
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from dependencies import publish_message
@@ -37,10 +39,21 @@ async def chat_websocket(websocket: WebSocket, user_id: str):
                 await websocket.send_text("Invalid JSON format.")
                 continue
 
-            # Possibly add a timestamp
-            # message_dict["timestamp"] = int(time.time() * 1000)
+            # Ensure required fields. Override sender_id, set type & sent_at.
+            if "conversation_id" not in message_dict:
+                await websocket.send_text("Missing conversation_id.")
+                continue
+            
+            # The server always trusts its own user_id
+            message_dict["sender_id"] = user_id
 
-            # Publish to RabbitMQ (or store in DB)
+            if "type" not in message_dict:
+                message_dict["type"] = "text"
+
+            if "sent_at" not in message_dict:
+                message_dict["sent_at"] = datetime.now(timezone.utc).isoformat()
+            
+            # Publish to RabbitMQ
             await asyncio.get_event_loop().run_in_executor(
                 None, publish_message, message_dict
             )
