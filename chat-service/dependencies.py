@@ -17,6 +17,8 @@ from models import Message
 import uuid
 from sqlalchemy.orm import Session
 from models import UsersConversation
+from datetime import datetime
+from datetime import timezone
 
 engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -75,7 +77,7 @@ async def store_message_in_redis(msg):
     Stores a message in Redis using Sorted Sets (ZADD).
     Messages are sorted by 'sent_at' timestamp for efficient retrieval.
     """
-    cid = msg["conversation_id"]
+    cid = str(msg["conversation_id"])
     message_json = json.dumps(msg)
     
     # Use 'sent_at' as the score to ensure messages are sorted by time
@@ -112,14 +114,14 @@ async def store_message_in_postgres(msg_data):
     """
     try:
         db: Session = next(get_db())  # Get a DB session
-
+        dt_sent = datetime.fromtimestamp(msg_data["sent_at"], timezone.utc)
         new_message = Message(
             id=uuid.uuid4(),
             conversation_id=msg_data["conversation_id"],
             user_id=msg_data["sender_id"],
             content=msg_data["content"],
             type=msg_data["type"],
-            sent_at=msg_data["sent_at"],
+            sent_at=dt_sent,
         )
 
         db.add(new_message)

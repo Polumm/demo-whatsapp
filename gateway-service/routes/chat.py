@@ -9,7 +9,7 @@ router = APIRouter()
 
 
 @router.websocket("/ws/{user_id}")
-@role_required("admin", "user")
+# @role_required("admin", "user")
 async def websocket_proxy(websocket: WebSocket, user_id: str):
     """
     WebSocket Proxy in `gateway-service`.

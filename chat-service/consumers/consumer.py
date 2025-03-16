@@ -73,10 +73,11 @@ def process_message(ch, method, properties, body):
         # let's do a function for real-time broadcast
         async def group_broadcast():
             for p in participants:
-                if p in connected_users:
-                    await _deliver_message(connected_users[p], msg_data)
+                p_str = str(p)  # Convert UUID to string
+                if p_str in connected_users:
+                    await _deliver_message(connected_users[p_str], msg_data)
                 else:
-                    await send_push_notification(p, msg_data)
+                    await send_push_notification(p_str, msg_data)  # Ensure push notification works with string IDs
 
         if MAIN_LOOP:
             asyncio.run_coroutine_threadsafe(group_broadcast(), MAIN_LOOP)
@@ -84,12 +85,16 @@ def process_message(ch, method, properties, body):
     # now do the storage tasks
     async def storage_tasks():
         try:
+            print("[chat-consumer] Storing message in Redis...")
             await store_message_in_redis(msg_data)
+            print("[chat-consumer] Successfully stored message in Redis.")
         except Exception as e:
             print("[chat-consumer] Redis store error:", e)
 
         try:
+            print("[chat-consumer] Storing message in Postgres...")
             await store_message_in_postgres(msg_data)
+            print("[chat-consumer] Successfully stored message in Postgres.")
         except Exception as e:
             print("[chat-consumer] Postgres store error:", e)
 

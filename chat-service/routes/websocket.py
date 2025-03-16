@@ -51,7 +51,7 @@ async def chat_websocket(websocket: WebSocket, user_id: str):
                 message_dict["type"] = "text"
 
             if "sent_at" not in message_dict:
-                message_dict["sent_at"] = datetime.now(timezone.utc).isoformat()
+                message_dict["sent_at"] = datetime.now(timezone.utc).timestamp()
             
             # Publish to RabbitMQ
             await asyncio.get_event_loop().run_in_executor(
