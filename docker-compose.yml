@@ -94,6 +94,34 @@ services:
     ports:
       - "8001:8001"
 
+  # ---------- Presence-Service + DB ----------
+  postgres-presence:
+    image: postgres:latest
+    container_name: postgres-presence
+    restart: always
+    environment:
+      POSTGRES_USER: presenceuser
+      POSTGRES_PASSWORD: presencepass
+      POSTGRES_DB: presencedb
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_presence_data:/var/lib/postgresql/data
+
+  presence-service:
+    build: ./presence-service
+    container_name: presence-service
+    restart: always
+    depends_on:
+      - postgres-presence
+    environment:
+      PYTHONUNBUFFERED: 1
+      PRESENCE_DATABASE_URL: postgresql://presenceuser:presencepass@postgres-presence:5432/presencedb
+    # If you want to expose port:
+    # ports:
+    #   - "8100:8100"
+
 volumes:
   postgres_auth_data:
   postgres_chat_data:
+  postgres_presence_data:

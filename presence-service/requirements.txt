@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+psycopg2-binary
+SQLAlchemy
+pydantic
+pytest
+pytest-asyncio
+requests
+httpx
