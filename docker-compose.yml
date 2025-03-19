@@ -44,9 +44,6 @@ services:
       APP_ENV: development
       DATABASE_URL: postgresql://authuser:authpass@postgres-auth:5432/authdb
       ACCESS_SECRET_KEY: "access_secret_key"
-    # If you want to expose port:
-    # ports:
-    #   - "8003:8003"
 
   # ---------- Chat-Service + DB ----------
   postgres-chat:
@@ -62,9 +59,14 @@ services:
     volumes:
       - postgres_chat_data:/var/lib/postgresql/data
 
-  chat-service:
+  # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  # Two replicas of chat-service, each with unique NODE_ID
+  # and different container name and port mapping
+  # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  chat-service-1:
     build: ./chat-service
-    container_name: chat-service
+    container_name: chat-service-1
     restart: always
     depends_on:
       - rabbitmq
@@ -76,11 +78,40 @@ services:
       REDIS_PORT: 6379
       RABBIT_HOST: rabbitmq
       RABBIT_PORT: 5672
-      QUEUE_NAME: messages_queue
+      EXCHANGE_NAME: "chat-direct-exchange"
+      NODE_ID: "node-1"
       DATABASE_URL: postgresql://chatuser:chatpass@postgres-chat:5432/chatdb
-    # If you want to expose port:
-    # ports:
-    #   - "8002:8002"
+
+  chat-service-2:
+    build: ./chat-service
+    container_name: chat-service-2
+    restart: always
+    depends_on:
+      - rabbitmq
+      - redis
+      - postgres-chat
+    environment:
+      PYTHONUNBUFFERED: 1
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RABBIT_HOST: rabbitmq
+      RABBIT_PORT: 5672
+      EXCHANGE_NAME: "chat-direct-exchange"
+      NODE_ID: "node-2"
+      DATABASE_URL: postgresql://chatuser:chatpass@postgres-chat:5432/chatdb
+
+  # ---------- Load Balancer (Nginx) ----------
+  nginx-lb:
+    image: nginx:latest
+    container_name: nginx-lb
+    restart: always
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - chat-service-1
+      - chat-service-2
 
   # ---------- Gateway ----------
   gateway-service:
@@ -89,10 +120,12 @@ services:
     restart: always
     environment:
       PYTHONUNBUFFERED: 1
-      CHAT_SERVICE_URL: "chat-service:8002"
+      CHAT_SERVICE_URL: "nginx-lb:8080"  # Load-balanced requests
       AUTH_SERVICE_URL: "auth-service:8003"
     ports:
       - "8001:8001"
+    depends_on:
+      - nginx-lb
 
   # ---------- Presence-Service + DB ----------
   postgres-presence:
@@ -117,9 +150,8 @@ services:
     environment:
       PYTHONUNBUFFERED: 1
       PRESENCE_DATABASE_URL: postgresql://presenceuser:presencepass@postgres-presence:5432/presencedb
-    # If you want to expose port:
-    # ports:
-    #   - "8100:8100"
+    ports:
+      - "8004:8004"
 
 volumes:
   postgres_auth_data:
