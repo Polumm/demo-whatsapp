@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # Include routes
-app.include_router(presence.router, prefix="/presence", tags=["presence"])
+app.include_router(presence.router, prefix="/presence")
 
 @app.get("/")
 def health_check():

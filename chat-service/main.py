@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app with lifespan manager
 app = FastAPI(lifespan=lifespan)
 app.include_router(websocket_router)
-app.include_router(convo_router, tags=["conversations"])
+app.include_router(convo_router)
 
 @app.get("/")
 def health_check():

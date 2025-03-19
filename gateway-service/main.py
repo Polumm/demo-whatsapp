@@ -3,14 +3,14 @@ import uvicorn
 
 from routes.auth import router as auth_router
 from routes.chat import router as chat_ws_router
-from routes.chat_crud import router as chat_crud_router
+from routes.conversation import router as convo_router
 
 app = FastAPI()
 
 # Include routers
 app.include_router(auth_router, prefix="/api")
 app.include_router(chat_ws_router, prefix="/api")
-app.include_router(chat_crud_router, prefix="/api/chat", tags=["chat"])
+app.include_router(convo_router, prefix="/api")
 
 @app.get("/")
 async def health_check():
