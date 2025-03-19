@@ -1,3 +1,4 @@
+import os
 import pika
 import json
 import time
@@ -15,6 +16,10 @@ from config import QUEUE_NAME
 MAIN_LOOP = None  # We will set this at startup in main.py
 
 
+EXCHANGE_NAME = os.getenv("EXCHANGE_NAME", "chat-direct-exchange")
+NODE_ID = os.getenv("NODE_ID", "node-1")
+
+
 def set_main_loop(loop: asyncio.AbstractEventLoop):
     """
     Called once at application startup, so the consumer code knows which
@@ -25,10 +30,29 @@ def set_main_loop(loop: asyncio.AbstractEventLoop):
     print("[chat-consumer] MAIN_LOOP set successfully.")
 
 
+def _setup_rabbitmq(channel):
+    """
+    Declare the exchange and bind our per-node queue.
+    This ensures that messages published with routing_key=NODE_ID
+    get delivered only to our node's queue.
+    """
+    channel.exchange_declare(
+        exchange=EXCHANGE_NAME,
+        exchange_type="direct",
+        durable=True
+    )
+    queue_name = f"{NODE_ID}-queue"
+    channel.queue_declare(queue=queue_name, durable=True)
+    channel.queue_bind(
+        exchange=EXCHANGE_NAME,
+        queue=queue_name,
+        routing_key=NODE_ID
+    )
+
+
 ###########################
 # The main logic
 ###########################
-
 def process_message(ch, method, properties, body):
     """
     1) Parse JSON
@@ -135,7 +159,9 @@ def blocking_consume():
             print("[chat-consumer] Connecting to RabbitMQ for consumption...")
             connection = create_consumer_connection()
             channel = connection.channel()
-            channel.queue_declare(queue=QUEUE_NAME, durable=True)
+            
+            # Setup exchange + queue binding
+            _setup_rabbitmq(channel)
 
             channel.basic_consume(
                 queue=QUEUE_NAME,
