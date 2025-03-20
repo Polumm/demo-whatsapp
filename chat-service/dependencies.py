@@ -1,21 +1,19 @@
-import os
 import json
+import uuid
 import redis
 import httpx
+from datetime import datetime, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
+
+from models import Message, UsersConversation
 from config import (
-    RABBIT_HOST,
-    RABBIT_PORT,
-    QUEUE_NAME,
+    NODE_ID,
     REDIS_HOST,
     REDIS_PORT,
     DATABASE_URL,
     PRESENCE_SERVICE_URL,
 )
-from models import Message, UsersConversation
-import uuid
-from datetime import datetime, timezone
 
 
 engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
@@ -144,3 +142,28 @@ def get_group_members(conversation_id: str):
     user_ids = [str(row[0]) for row in members]
     print(f"[chat-consumer] get_group_members({conversation_id}), found {user_ids}")
     return user_ids
+
+
+async def update_presence_status(user_id: str, status: str):
+    """
+    Calls the presence-service API (async) to update user status via httpx.
+    """
+    payload = {"user_id": user_id, "node_id": NODE_ID, "status": status}
+    url = (
+        f"{PRESENCE_SERVICE_URL}/presence/online"
+        if status == "online"
+        else f"{PRESENCE_SERVICE_URL}/presence/offline"
+    )
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=payload)
+            if response.status_code == 200:
+                print(
+                    f"[presence-service] Updated presence for {user_id} to {status} on {NODE_ID}"
+                )
+            else:
+                print(
+                    f"[presence-service] Failed to update presence for {user_id}: {response.text}"
+                )
+    except Exception as e:
+        print(f"[presence-service] Error updating presence for {user_id}: {e}")

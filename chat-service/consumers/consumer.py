@@ -4,16 +4,16 @@ import logging
 from aio_pika import connect_robust, ExchangeType, IncomingMessage
 from aio_pika.exceptions import AMQPConnectionError
 
-from dependencies import create_consumer_connection, get_group_members
+from dependencies import get_group_members
 from dependencies import store_message_in_redis, store_message_in_postgres
 from routes.notifications import send_push_notification
 from publisher.publisher import connected_users
+
 from config import (
     EXCHANGE_NAME,
     NODE_ID,
     RABBIT_HOST,
     RABBIT_PORT,
-    QUEUE_NAME
 )
 
 async def start_consumer():

@@ -3,21 +3,16 @@ from datetime import datetime, timezone
 from typing import Dict
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
-import asyncio
-
 from aio_pika import connect_robust, Message, DeliveryMode, ExchangeType
 
 from config import (
-    PRESENCE_SERVICE_URL,
-    NODE_ID,
     RABBIT_HOST,
     RABBIT_PORT,
     EXCHANGE_NAME
 )
 from fastapi import HTTPException
 
-from dependencies import get_node_for_user, get_group_members
-from .presence_client import update_presence_status  # We'll define an async presence helper
+from dependencies import get_node_for_user, get_group_members, update_presence_status
 
 
 router = APIRouter()
