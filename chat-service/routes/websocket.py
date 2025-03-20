@@ -2,14 +2,39 @@ import asyncio
 import json
 from datetime import datetime
 from datetime import timezone
+import os
 from typing import Dict
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+import requests
 from dependencies import publish_message
 
+
+PRESENCE_SERVICE_URL = os.getenv("PRESENCE_SERVICE_URL", "http://presence-service:8004")
+NODE_ID = os.getenv("NODE_ID", "node-1")  # Set the correct node
 router = APIRouter()
 
 # Track connected users (user_id -> WebSocket)
 connected_users: Dict[str, WebSocket] = {}
+
+def update_presence_status(user_id: str, status: str):
+    """
+    Calls the presence-service API to update user status.
+    """
+    payload = {
+        "user_id": user_id,
+        "node_id": NODE_ID,
+        "status": status
+    }
+    
+    try:
+        url = f"{PRESENCE_SERVICE_URL}/presence/online" if status == "online" else f"{PRESENCE_SERVICE_URL}/offline"
+        response = requests.post(url, json=payload)
+        if response.status_code == 200:
+            print(f"[presence-service] Updated presence for {user_id} to {status} on {NODE_ID}")
+        else:
+            print(f"[presence-service] Failed to update presence for {user_id}: {response.text}")
+    except Exception as e:
+        print(f"[presence-service] Error updating presence for {user_id}: {e}")
 
 
 @router.websocket("/ws/{user_id}")
@@ -25,6 +50,9 @@ async def chat_websocket(websocket: WebSocket, user_id: str):
     connected_users[user_id] = websocket
     print(f"[chat-service] User {user_id} connected via WebSocket.")
 
+    # Update presence info
+    update_presence_status(user_id, "online")
+    
     try:
         while True:
             # Read text from gateway => user is sending a chat message
@@ -66,3 +94,6 @@ async def chat_websocket(websocket: WebSocket, user_id: str):
         # remove from connected list
         if user_id in connected_users:
             del connected_users[user_id]
+        
+        # Mark user as offline
+        update_presence_status(user_id, "offline")
