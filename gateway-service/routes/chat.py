@@ -1,4 +1,5 @@
 import asyncio
+from fastapi.websockets import WebSocketState
 import requests
 import websockets
 from config import CHAT_SERVICE_URL
@@ -50,6 +51,7 @@ async def websocket_proxy(websocket: WebSocket, user_id: str):
     except Exception as e:
         print(f"[gateway] Proxy error for user {user_id}: {e}")
     finally:
-        # We'll close both sides if we can
-        await websocket.close()
+        # Ensure clean WebSocket closure
+        if websocket.client_state != WebSocketState.DISCONNECTED:
+            await websocket.close()
         print(f"[gateway] Proxy closed for user {user_id}")

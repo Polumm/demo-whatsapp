@@ -21,13 +21,9 @@ from sqlalchemy.orm import Session
 from models import UsersConversation
 from datetime import datetime
 from datetime import timezone
+from config import EXCHANGE_NAME
+from config import PRESENCE_SERVICE_URL
 
-# Exchange name
-EXCHANGE_NAME = os.getenv("EXCHANGE_NAME", "chat-direct-exchange")
-NODE_ID = os.getenv("NODE_ID", "node-1")  # local node ID if we need it
-PRESENCE_URL = (
-    "http://presence-service:8004"  # or whatever your presence-service is
-)
 
 engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -66,7 +62,7 @@ def get_node_for_user(user_id: str):
     """
     try:
         # GET /presence-service/<user_id>
-        r = requests.get(f"{PRESENCE_URL}/presence/{user_id}")
+        r = requests.get(f"{PRESENCE_SERVICE_URL}/presence/{user_id}")
         if r.status_code == 200:
             data = r.json()
             return data.get("node_id")  # e.g. "node-2"
@@ -77,88 +73,7 @@ def get_node_for_user(user_id: str):
         return None
 
 
-def publish_message(message_dict):
-    """
-    Publish a message to the direct exchange. We determine the target user's node
-    and set that as the routing_key. If user offline, you can store or skip.
-    """
-    to_user = message_dict.get("toUser")
-    if not to_user:
-        # e.g. group message scenario or error
-        _publish_group_or_generic(message_dict)
-        return
 
-    user_node_id = get_node_for_user(to_user)
-    if not user_node_id:
-        # user offline or not found in presence
-        # handle offline scenario, store for later, etc.
-        print(f"[publish_message] User {to_user} is offline or not found.")
-        # Or just store in DB, or do nothing, up to you
-        return
-
-    try:
-        parameters = pika.ConnectionParameters(
-            host=RABBIT_HOST, port=RABBIT_PORT
-        )
-        with pika.BlockingConnection(parameters) as connection:
-            channel = connection.channel()
-            # we do NOT declare queue here, only declare exchange if needed
-            channel.exchange_declare(
-                exchange=EXCHANGE_NAME, exchange_type="direct", durable=True
-            )
-
-            # Publish to the exchange with routing_key=user_node_id
-            body_str = json.dumps(message_dict)
-            channel.basic_publish(
-                exchange=EXCHANGE_NAME,
-                routing_key=user_node_id,
-                body=body_str.encode("utf-8"),
-                properties=pika.BasicProperties(delivery_mode=2),
-            )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error publishing message: {e}"
-        )
-
-
-def _publish_group_or_generic(message_dict):
-    """
-    Example of how you'd handle group messages or messages that have no single 'toUser'.
-    Possibly you'd broadcast to each group member's node, etc.
-    You can either loop over each user in the group and do the same presence logic,
-    or store it for them to fetch next time.
-    """
-    # For a group scenario, you'd get the group membership from DB, then for each user:
-    from .dependencies import get_group_members
-
-    conversation_id = message_dict["conversation_id"]
-    members = get_group_members(conversation_id)
-
-    for user_id in members:
-        user_node_id = get_node_for_user(str(user_id))
-        if not user_node_id:
-            # user offline
-            continue
-        try:
-            parameters = pika.ConnectionParameters(
-                host=RABBIT_HOST, port=RABBIT_PORT
-            )
-            with pika.BlockingConnection(parameters) as connection:
-                channel = connection.channel()
-                channel.exchange_declare(
-                    exchange=EXCHANGE_NAME,
-                    exchange_type="direct",
-                    durable=True,
-                )
-                body_str = json.dumps(message_dict)
-                channel.basic_publish(
-                    exchange=EXCHANGE_NAME,
-                    routing_key=user_node_id,
-                    body=body_str.encode("utf-8"),
-                    properties=pika.BasicProperties(delivery_mode=2),
-                )
-        except Exception as e:
-            print("[_publish_group_or_generic] Error publishing group msg:", e)
 
 
 async def store_message_in_redis(msg):

@@ -7,17 +7,15 @@ import asyncio
 from dependencies import create_consumer_connection, get_group_members
 from dependencies import store_message_in_redis, store_message_in_postgres
 from routes.notifications import send_push_notification
-from routes.websocket import connected_users
+from publisher.publisher import connected_users
 from config import QUEUE_NAME
+from config import EXCHANGE_NAME
+from config import NODE_ID
 
 ###########################
 # Global reference to main event loop
 ###########################
 MAIN_LOOP = None  # We will set this at startup in main.py
-
-
-EXCHANGE_NAME = os.getenv("EXCHANGE_NAME", "chat-direct-exchange")
-NODE_ID = os.getenv("NODE_ID", "node-1")
 
 
 def set_main_loop(loop: asyncio.AbstractEventLoop):
@@ -37,23 +35,19 @@ def _setup_rabbitmq(channel):
     get delivered only to our node's queue.
     """
     channel.exchange_declare(
-        exchange=EXCHANGE_NAME,
-        exchange_type="direct",
-        durable=True
+        exchange=EXCHANGE_NAME, exchange_type="direct", durable=True
     )
     queue_name = f"{NODE_ID}-queue"
     channel.queue_declare(queue=queue_name, durable=True)
     channel.queue_bind(
-        exchange=EXCHANGE_NAME,
-        queue=queue_name,
-        routing_key=NODE_ID
+        exchange=EXCHANGE_NAME, queue=queue_name, routing_key=NODE_ID
     )
 
 
 ###########################
 # The main logic
 ###########################
-def process_message(ch, method, properties, body):
+def mq_to_client(ch, method, properties, body):
     """
     1) Parse JSON
     2) If direct => toUser? If group => membership?
@@ -86,14 +80,19 @@ def process_message(ch, method, properties, body):
         # direct chat
         ws = connected_users.get(to_user)
         if ws and MAIN_LOOP:
-            future = asyncio.run_coroutine_threadsafe(_deliver_message(ws, msg_data), MAIN_LOOP)
+            future = asyncio.run_coroutine_threadsafe(
+                _deliver_message(ws, msg_data), MAIN_LOOP
+            )
         else:
             # offline => push
             if MAIN_LOOP:
-                asyncio.run_coroutine_threadsafe(send_push_notification(to_user, msg_data), MAIN_LOOP)
+                asyncio.run_coroutine_threadsafe(
+                    send_push_notification(to_user, msg_data), MAIN_LOOP
+                )
     else:
         # group scenario => membership
         participants = get_group_members(msg_data["conversation_id"])
+
         # let's do a function for real-time broadcast
         async def group_broadcast():
             for p in participants:
@@ -101,7 +100,9 @@ def process_message(ch, method, properties, body):
                 if p_str in connected_users:
                     await _deliver_message(connected_users[p_str], msg_data)
                 else:
-                    await send_push_notification(p_str, msg_data)  # Ensure push notification works with string IDs
+                    await send_push_notification(
+                        p_str, msg_data
+                    )  # Ensure push notification works with string IDs
 
         if MAIN_LOOP:
             asyncio.run_coroutine_threadsafe(group_broadcast(), MAIN_LOOP)
@@ -159,14 +160,14 @@ def blocking_consume():
             print("[chat-consumer] Connecting to RabbitMQ for consumption...")
             connection = create_consumer_connection()
             channel = connection.channel()
-            
+
             # Setup exchange + queue binding
             _setup_rabbitmq(channel)
 
             channel.basic_consume(
                 queue=QUEUE_NAME,
-                on_message_callback=process_message,
-                auto_ack=False,  # We do manual ack in process_message
+                on_message_callback=mq_to_client,
+                auto_ack=False,  # We do manual ack in mq_to_client
             )
 
             print("[chat-consumer] Waiting for messages (blocking consume)...")
@@ -183,11 +184,3 @@ def blocking_consume():
         except Exception as e:
             print("[chat-consumer] Consumer crashed:", e, "Retrying in 5s...")
             time.sleep(5)
-
-
-# def get_group_members(conversation_id: str):
-#     """
-#     Placeholder function for group membership. In real code, you'd query DB or a cache.
-#     """
-#     print("[chat-consumer] get_group_members called.")
-#     return ["Bob", "Charlie", "Dave"]  # example

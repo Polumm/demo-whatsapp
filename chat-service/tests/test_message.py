@@ -4,25 +4,27 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
-from consumers.consumer import process_message, MAIN_LOOP, set_main_loop
+from consumers.consumer import mq_to_client, set_main_loop
 from main import app as websocket_app
 
 client = TestClient(websocket_app)
+
 
 @pytest.fixture
 def unify_event_loop(event_loop):
     """
     Use the function-scoped event_loop from pytest-asyncio.
-    Set MAIN_LOOP to this event_loop so that 
-    run_coroutine_threadsafe(...) uses the same loop 
+    Set MAIN_LOOP to this event_loop so that
+    run_coroutine_threadsafe(...) uses the same loop
     that the test is awaiting on.
     """
     set_main_loop(event_loop)
     yield
     # no loop.close() or stop()
 
+
 @pytest.mark.asyncio
-async def test_process_message(unify_event_loop):
+async def test_mq_to_client(unify_event_loop):
     msg_data = {
         "conversation_id": "abc123",
         "toUser": "Bob",
@@ -41,13 +43,21 @@ async def test_process_message(unify_event_loop):
     ws_mock = AsyncMock()
     connected_users_mock = {"Bob": ws_mock}
 
-    with patch("consumers.consumer.connected_users", connected_users_mock), \
-         patch("consumers.consumer.store_message_in_redis", new_callable=AsyncMock) as mock_redis, \
-         patch("consumers.consumer.store_message_in_postgres", new_callable=AsyncMock) as mock_postgres, \
-         patch("consumers.consumer.send_push_notification", new_callable=AsyncMock) as mock_push:
-
+    with (
+        patch("consumers.consumer.connected_users", connected_users_mock),
+        patch(
+            "consumers.consumer.store_message_in_redis", new_callable=AsyncMock
+        ) as mock_redis,
+        patch(
+            "consumers.consumer.store_message_in_postgres",
+            new_callable=AsyncMock,
+        ) as mock_postgres,
+        patch(
+            "consumers.consumer.send_push_notification", new_callable=AsyncMock
+        ) as mock_push,
+    ):
         # call
-        process_message(ch_mock, method_mock, None, body)
+        mq_to_client(ch_mock, method_mock, None, body)
         # let tasks run
         await asyncio.sleep(0.1)
 
@@ -56,6 +66,7 @@ async def test_process_message(unify_event_loop):
         mock_redis.assert_awaited_once_with(msg_data)
         mock_postgres.assert_awaited_once_with(msg_data)
         mock_push.assert_not_awaited()
+
 
 # @pytest.mark.asyncio
 # async def test_group_chat_message(unify_event_loop):
@@ -86,7 +97,7 @@ async def test_process_message(unify_event_loop):
 #          patch("consumers.consumer.store_message_in_postgres", new_callable=AsyncMock) as mock_postgres, \
 #          patch("consumers.consumer.send_push_notification", new_callable=AsyncMock) as mock_push:
 
-#         process_message(ch_mock, method_mock, None, body)
+#         mq_to_client(ch_mock, method_mock, None, body)
 #         await asyncio.sleep(0.1)
 
 #         ch_mock.basic_ack.assert_called_once()
@@ -95,6 +106,7 @@ async def test_process_message(unify_event_loop):
 #         mock_push.assert_awaited_once_with("Dave", msg_data)
 #         mock_redis.assert_awaited_once_with(msg_data)
 #         mock_postgres.assert_awaited_once_with(msg_data)
+
 
 @pytest.mark.asyncio
 async def test_websocket_message(unify_event_loop):
@@ -109,7 +121,7 @@ async def test_websocket_message(unify_event_loop):
             msg = {
                 "conversation_id": "abc123",
                 "to_user": "Bob",
-                "content": "Hello Bob!"
+                "content": "Hello Bob!",
             }
             ws.send_text(json.dumps(msg))
 

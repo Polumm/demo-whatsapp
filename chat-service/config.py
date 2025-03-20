@@ -1,5 +1,8 @@
 import os
 
+# APP_ENV Config
+APP_ENV = os.getenv("APP_ENV", "development")
+
 # RabbitMQ Config
 RABBIT_HOST = os.getenv("RABBIT_HOST", "rabbitmq")
 RABBIT_PORT = int(os.getenv("RABBIT_PORT", "5672"))
@@ -22,3 +25,11 @@ DATABASE_URL = os.getenv(
 
 # Presence Service URL
 PRESENCE_SERVICE_URL = os.getenv("PRESENCE_SERVICE_URL", "http://presence-service:8004")
+
+
+# Exchange name
+EXCHANGE_NAME = os.getenv("EXCHANGE_NAME", "chat-direct-exchange")
+NODE_ID = os.getenv("NODE_ID", "node-1")  # local node ID if we need it
+PRESENCE_URL = (
+    "http://presence-service:8004"  # or whatever your presence-service is
+)
