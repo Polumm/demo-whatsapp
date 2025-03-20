@@ -11,3 +11,5 @@ httpx
 asyncio
 pytest-asyncio
 requests
+aio-pika
+httpx

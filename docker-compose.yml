@@ -12,7 +12,11 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
-
+    healthcheck:  # Add health check to ensure it's ready before starting chat services
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
   redis:
     image: redis:latest
     container_name: redis
@@ -69,9 +73,12 @@ services:
     container_name: chat-service-1
     restart: always
     depends_on:
-      - rabbitmq
-      - redis
-      - postgres-chat
+      rabbitmq:
+        condition: service_healthy  # ✅ Only RabbitMQ is checked for readiness
+      redis:
+        condition: service_started
+      postgres-chat:
+        condition: service_started
     environment:
       PYTHONUNBUFFERED: 1
       REDIS_HOST: redis
@@ -87,9 +94,12 @@ services:
     container_name: chat-service-2
     restart: always
     depends_on:
-      - rabbitmq
-      - redis
-      - postgres-chat
+      rabbitmq:
+        condition: service_healthy  # ✅ Only RabbitMQ is checked for readiness
+      redis:
+        condition: service_started
+      postgres-chat:
+        condition: service_started
     environment:
       PYTHONUNBUFFERED: 1
       REDIS_HOST: redis

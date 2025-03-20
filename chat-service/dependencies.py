@@ -1,28 +1,21 @@
 import os
 import json
-import pika
-import requests
 import redis
+import httpx
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
 from config import (
     RABBIT_HOST,
     RABBIT_PORT,
     QUEUE_NAME,
     REDIS_HOST,
     REDIS_PORT,
+    DATABASE_URL,
+    PRESENCE_SERVICE_URL,
 )
-from fastapi import HTTPException
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from config import DATABASE_URL
-from sqlalchemy.orm import Session
-from models import Message
+from models import Message, UsersConversation
 import uuid
-from sqlalchemy.orm import Session
-from models import UsersConversation
-from datetime import datetime
-from datetime import timezone
-from config import EXCHANGE_NAME
-from config import PRESENCE_SERVICE_URL
+from datetime import datetime, timezone
 
 
 engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
@@ -42,38 +35,34 @@ def get_db():
 
 
 # Redis connection
-redis_client = redis.Redis(
-    host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True
-)
+redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
 
 
 def create_consumer_connection():
-    """Creates a dedicated RabbitMQ connection for the consumer."""
-    connection_params = pika.ConnectionParameters(
-        host=RABBIT_HOST, port=RABBIT_PORT
-    )
-    return pika.BlockingConnection(connection_params)
-
-
-def get_node_for_user(user_id: str):
     """
-    Query presence-service to find the node_id for a given user.
+    (No longer used directly in code, unless you keep
+     a fallback or handle certain edge cases.)
+    You could remove this if you only use aio-pika now.
+    """
+    pass
+
+
+async def get_node_for_user(user_id: str):
+    """
+    Query presence-service to find the node_id for a given user (async).
     Returns None if offline or not found.
     """
     try:
-        # GET /presence-service/<user_id>
-        r = requests.get(f"{PRESENCE_SERVICE_URL}/presence/{user_id}")
-        if r.status_code == 200:
-            data = r.json()
-            return data.get("node_id")  # e.g. "node-2"
-        else:
-            return None
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{PRESENCE_SERVICE_URL}/presence/{user_id}")
+            if r.status_code == 200:
+                data = r.json()
+                return data.get("node_id")  # e.g. "node-2"
+            else:
+                return None
     except Exception as e:
         print("[publish_message] Presence lookup error:", e)
         return None
-
-
-
 
 
 async def store_message_in_redis(msg):
@@ -84,13 +73,11 @@ async def store_message_in_redis(msg):
     cid = str(msg["conversation_id"])
     message_json = json.dumps(msg)
 
-    # Use 'sent_at' as the score to ensure messages are sorted by time
+    # Use 'sent_at' as the score
     redis_client.zadd(f"chat:{cid}:messages", {message_json: msg["sent_at"]})
 
-    # Optional: Remove older messages beyond a threshold (e.g., keep last 100)
-    redis_client.zremrangebyrank(
-        f"chat:{cid}:messages", 0, -101
-    )  # Keeps last 100 messages
+    # Optional: remove older messages beyond some threshold
+    redis_client.zremrangebyrank(f"chat:{cid}:messages", 0, -101)  # Keep last 100
 
 
 async def get_recent_messages(conversation_id, count=50):
@@ -98,12 +85,8 @@ async def get_recent_messages(conversation_id, count=50):
     Fetches the last 'count' messages from Redis for a given conversation.
     Retrieves them in correct chronological order (oldest to newest).
     """
-    messages = redis_client.zrange(
-        f"chat:{conversation_id}:messages", -count, -1
-    )  # Get latest 'count' messages
-    return [
-        json.loads(msg) for msg in messages
-    ]  # Convert JSON back to Python dict
+    messages = redis_client.zrange(f"chat:{conversation_id}:messages", -count, -1)
+    return [json.loads(msg) for msg in messages]
 
 
 async def get_messages_in_time_range(conversation_id, start_time, end_time):
@@ -113,7 +96,7 @@ async def get_messages_in_time_range(conversation_id, start_time, end_time):
     messages = redis_client.zrangebyscore(
         f"chat:{conversation_id}:messages",
         start_time,  # Start timestamp
-        end_time,  # End timestamp
+        end_time,    # End timestamp
     )
     return [json.loads(msg) for msg in messages]
 
@@ -123,19 +106,23 @@ async def store_message_in_postgres(msg_data):
     Stores the message in Postgres.
     """
     try:
-        db: Session = next(get_db())  # Get a DB session
+        # Acquire a DB session
+        db: Session = SessionLocal()
         dt_sent = datetime.fromtimestamp(msg_data["sent_at"], timezone.utc)
+
+        # Build the Message object
         new_message = Message(
             id=uuid.uuid4(),
             conversation_id=msg_data["conversation_id"],
             user_id=msg_data["sender_id"],
-            content=msg_data["content"],
+            content=msg_data.get("content"),
             type=msg_data["type"],
             sent_at=dt_sent,
         )
 
         db.add(new_message)
         db.commit()
+        db.close()
         print(f"[chat-consumer] Stored message in Postgres: {msg_data}")
 
     except Exception as e:
@@ -146,17 +133,14 @@ def get_group_members(conversation_id: str):
     """
     Retrieves user_ids from the users_conversation table for the given conversation.
     """
-    db: Session = next(get_db())  # yields a session
+    db: Session = SessionLocal()
     members = (
         db.query(UsersConversation.user_id)
         .filter(UsersConversation.conversation_id == conversation_id)
         .all()
-    )  # returns list of (user_id,)
-
-    # each row is a tuple like (UUID(...),), so we flatten:
-    user_ids = [row[0] for row in members]
-    db.close()
-    print(
-        f"[chat-consumer] get_group_members called for {conversation_id}, found {user_ids}"
     )
+    db.close()
+    # each row is a tuple like (UUID(...),), so we flatten:
+    user_ids = [str(row[0]) for row in members]
+    print(f"[chat-consumer] get_group_members({conversation_id}), found {user_ids}")
     return user_ids

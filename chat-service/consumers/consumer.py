@@ -1,62 +1,70 @@
-import os
-import pika
 import json
-import time
 import asyncio
+import logging
+from aio_pika import connect_robust, ExchangeType, IncomingMessage
+from aio_pika.exceptions import AMQPConnectionError
 
 from dependencies import create_consumer_connection, get_group_members
 from dependencies import store_message_in_redis, store_message_in_postgres
 from routes.notifications import send_push_notification
 from publisher.publisher import connected_users
-from config import QUEUE_NAME
-from config import EXCHANGE_NAME
-from config import NODE_ID
+from config import (
+    EXCHANGE_NAME,
+    NODE_ID,
+    RABBIT_HOST,
+    RABBIT_PORT,
+    QUEUE_NAME
+)
 
-###########################
-# Global reference to main event loop
-###########################
-MAIN_LOOP = None  # We will set this at startup in main.py
-
-
-def set_main_loop(loop: asyncio.AbstractEventLoop):
+async def start_consumer():
     """
-    Called once at application startup, so the consumer code knows which
-    event loop to schedule coroutines on. This avoids the "no current event loop" error.
+    Establishes an aio-pika connection, declares the queue, and starts consuming.
+    Retries the connection if RabbitMQ is not yet available.
     """
-    global MAIN_LOOP
-    MAIN_LOOP = loop
-    print("[chat-consumer] MAIN_LOOP set successfully.")
+    retry_delay = 1  # start with 1 second delay
+    while True:
+        try:
+            connection = await connect_robust(host=RABBIT_HOST, port=RABBIT_PORT)
+            channel = await connection.channel()
 
+            # Declare exchange & queue
+            exchange = await channel.declare_exchange(
+                EXCHANGE_NAME, ExchangeType.DIRECT, durable=True
+            )
+            queue_name = f"{NODE_ID}-queue"
+            queue = await channel.declare_queue(queue_name, durable=True)
 
-def _setup_rabbitmq(channel):
+            # Bind queue to exchange with routing_key=NODE_ID
+            await queue.bind(exchange, routing_key=NODE_ID)
+
+            logging.info("[chat-consumer] Waiting for messages (aio-pika consume)...")
+
+            # Start consuming with a message handler
+            await queue.consume(on_message, no_ack=False)
+
+            # Keep the task alive; this future never completes unless cancelled.
+            await asyncio.Future()
+
+        except asyncio.CancelledError:
+            logging.info("[chat-consumer] Consumer task cancelled. Closing connection.")
+            break
+        except AMQPConnectionError as e:
+            logging.error("[chat-consumer] RabbitMQ connection failed: %s. Retrying in %s seconds...", e, retry_delay)
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 30)  # exponential backoff capped at 30 seconds
+        except Exception as e:
+            logging.error("[chat-consumer] Consumer crashed: %s", e)
+            raise
+
+async def on_message(message: IncomingMessage):
     """
-    Declare the exchange and bind our per-node queue.
-    This ensures that messages published with routing_key=NODE_ID
-    get delivered only to our node's queue.
-    """
-    channel.exchange_declare(
-        exchange=EXCHANGE_NAME, exchange_type="direct", durable=True
-    )
-    queue_name = f"{NODE_ID}-queue"
-    channel.queue_declare(queue=queue_name, durable=True)
-    channel.queue_bind(
-        exchange=EXCHANGE_NAME, queue=queue_name, routing_key=NODE_ID
-    )
-
-
-###########################
-# The main logic
-###########################
-def mq_to_client(ch, method, properties, body):
-    """
+    Handler for incoming messages from RabbitMQ.
     1) Parse JSON
-    2) If direct => toUser? If group => membership?
-    3) Acknowledge
-    4) Real-time deliver
-    5) Store in Redis, Postgres asynchronously
+    2) Real-time deliver (direct or group)
+    3) Store in Redis/Postgres
+    4) Acknowledge
     """
-
-    msg_str = body.decode("utf-8")
+    msg_str = message.body.decode("utf-8")
     print(f"[chat-consumer] Received raw message: {msg_str}")
 
     # parse JSON
@@ -64,123 +72,67 @@ def mq_to_client(ch, method, properties, body):
         msg_data = json.loads(msg_str)
     except json.JSONDecodeError as e:
         print("[chat-consumer] JSON parse error:", e)
-        if method is not None:
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+        # Safely acknowledge so it won't requeue
+        await message.ack()
         return
-
-    # Acknowledge
-    if method is not None:
-        ch.basic_ack(delivery_tag=method.delivery_tag)
-    else:
-        print("[chat-consumer] WARNING: method is None, cannot ack")
 
     # Real-time delivery
     to_user = msg_data.get("toUser")
     if to_user:
         # direct chat
         ws = connected_users.get(to_user)
-        if ws and MAIN_LOOP:
-            future = asyncio.run_coroutine_threadsafe(
-                _deliver_message(ws, msg_data), MAIN_LOOP
-            )
+        if ws is not None:
+            await _deliver_message(ws, msg_data)
         else:
             # offline => push
-            if MAIN_LOOP:
-                asyncio.run_coroutine_threadsafe(
-                    send_push_notification(to_user, msg_data), MAIN_LOOP
-                )
+            await send_push_notification(to_user, msg_data)
     else:
         # group scenario => membership
         participants = get_group_members(msg_data["conversation_id"])
+        # broadcast
+        await _group_broadcast(participants, msg_data)
 
-        # let's do a function for real-time broadcast
-        async def group_broadcast():
-            for p in participants:
-                p_str = str(p)  # Convert UUID to string
-                if p_str in connected_users:
-                    await _deliver_message(connected_users[p_str], msg_data)
-                else:
-                    await send_push_notification(
-                        p_str, msg_data
-                    )  # Ensure push notification works with string IDs
+    # Store message in Redis, Postgres concurrently
+    await _storage_tasks(msg_data)
 
-        if MAIN_LOOP:
-            asyncio.run_coroutine_threadsafe(group_broadcast(), MAIN_LOOP)
-
-    # now do the storage tasks
-    async def storage_tasks():
-        try:
-            print("[chat-consumer] Storing message in Redis...")
-            await store_message_in_redis(msg_data)
-            print("[chat-consumer] Successfully stored message in Redis.")
-        except Exception as e:
-            print("[chat-consumer] Redis store error:", e)
-
-        try:
-            print("[chat-consumer] Storing message in Postgres...")
-            await store_message_in_postgres(msg_data)
-            print("[chat-consumer] Successfully stored message in Postgres.")
-        except Exception as e:
-            print("[chat-consumer] Postgres store error:", e)
-
-    if MAIN_LOOP:
-        asyncio.run_coroutine_threadsafe(storage_tasks(), MAIN_LOOP)
-    else:
-        print("[chat-consumer] WARNING: no MAIN_LOOP, can't do storage tasks")
+    # Acknowledge last, so if something fails we can retry
+    await message.ack()
 
 
-###########################
-# The async routine for real-time delivery
-###########################
 async def _deliver_message(ws, msg_data):
     """
     Coroutine that sends the message to the user's WebSocket.
-    Scheduled from the blocking thread using run_coroutine_threadsafe(...).
     """
     try:
         await ws.send_text(json.dumps(msg_data))
-        print(
-            f"[chat-consumer] Delivered real-time to {msg_data.get('toUser')}."
-        )
+        print(f"[chat-consumer] Delivered real-time to {msg_data.get('toUser')}.")
     except Exception as e:
         print("[chat-consumer] Failed sending to WebSocket:", e)
 
 
-###########################
-# The main blocking consumer loop
-###########################
-def blocking_consume():
+async def _group_broadcast(participants, msg_data):
+    """Broadcast a message to each group member if connected, else push."""
+    for p in participants:
+        p_str = str(p)
+        if p_str in connected_users:
+            ws = connected_users[p_str]
+            await _deliver_message(ws, msg_data)
+        else:
+            await send_push_notification(p_str, msg_data)
+
+
+async def _storage_tasks(msg_data):
     """
-    Connects to RabbitMQ, starts a blocking consume, auto-reconnect on failure.
-    This runs in a separate thread from FastAPI.
+    Stores message in Redis & Postgres concurrently.
     """
-    retry_delay = 1
-    while True:
-        try:
-            print("[chat-consumer] Connecting to RabbitMQ for consumption...")
-            connection = create_consumer_connection()
-            channel = connection.channel()
+    try:
+        await store_message_in_redis(msg_data)
+        print("[chat-consumer] Successfully stored message in Redis.")
+    except Exception as e:
+        print("[chat-consumer] Redis store error:", e)
 
-            # Setup exchange + queue binding
-            _setup_rabbitmq(channel)
-
-            channel.basic_consume(
-                queue=QUEUE_NAME,
-                on_message_callback=mq_to_client,
-                auto_ack=False,  # We do manual ack in mq_to_client
-            )
-
-            print("[chat-consumer] Waiting for messages (blocking consume)...")
-            channel.start_consuming()  # BLOCKS this thread
-
-        except pika.exceptions.AMQPConnectionError as e:
-            print(
-                f"[chat-consumer] RabbitMQ connection lost: {e}. Retrying in {retry_delay}s..."
-            )
-            time.sleep(retry_delay)
-            retry_delay = min(
-                retry_delay * 2, 30
-            )  # Exponential backoff up to 30s
-        except Exception as e:
-            print("[chat-consumer] Consumer crashed:", e, "Retrying in 5s...")
-            time.sleep(5)
+    try:
+        await store_message_in_postgres(msg_data)
+        print("[chat-consumer] Successfully stored message in Postgres.")
+    except Exception as e:
+        print("[chat-consumer] Postgres store error:", e)

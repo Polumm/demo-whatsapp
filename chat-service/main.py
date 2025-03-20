@@ -1,6 +1,5 @@
 import uvicorn
 import asyncio
-import threading
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
@@ -8,8 +7,8 @@ from models import Base
 from dependencies import engine
 from routes.conversations import router as convo_router
 from publisher.publisher import router as websocket_router
-from consumers.consumer import blocking_consume, set_main_loop
 from config import APP_ENV
+from consumers.consumer import start_consumer
 
 
 def create_tables():
@@ -21,26 +20,26 @@ def create_tables():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Handles app startup and shutdown lifecycle."""
-    # Set event loop for consumer (if needed)
-    loop = asyncio.get_running_loop()
-    set_main_loop(loop)
-
+    """
+    Handles app startup and shutdown lifecycle.
+    """
     # Create tables only in development mode
     create_tables()
 
-    # Prevent multiple consumer threads
-    if "consumer_thread" not in globals():
-        global consumer_thread
-        consumer_thread = threading.Thread(
-            target=blocking_consume, daemon=True
-        )
-        consumer_thread.start()
-        print("[chat-service] blocking_consume started in background thread.")
+    # Start the consumer as a background task
+    # so it runs in the same event loop
+    print("[chat-service] Starting aio-pika consumer task...")
+    app.state.consumer_task = asyncio.create_task(start_consumer())
 
-    yield  # Runs while the app is running
+    yield  # The app is running here
 
-    print("[chat-service] Shutting down...")
+    # On shutdown, cancel the consumer task
+    print("[chat-service] Shutting down consumer task...")
+    app.state.consumer_task.cancel()
+    try:
+        await app.state.consumer_task
+    except asyncio.CancelledError:
+        print("[chat-service] Consumer task cancelled.")
 
 
 # Initialize FastAPI app with lifespan manager
@@ -50,7 +49,7 @@ app.include_router(convo_router)
 
 
 @app.get("/")
-def health_check():
+async def health_check():
     """Health check endpoint."""
     return {"status": "chat-service OK"}
 
