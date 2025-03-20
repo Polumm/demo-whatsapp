@@ -1,14 +1,20 @@
 import json
 import asyncio
 import logging
+from typing import Optional
 from aio_pika import connect_robust, ExchangeType, IncomingMessage
 from aio_pika.exceptions import AMQPConnectionError
+from aio_pika.abc import (
+    AbstractRobustConnection,
+    AbstractChannel,
+    AbstractExchange,
+    AbstractQueue,
+)
 
 from dependencies import get_group_members
 from dependencies import store_message_in_redis, store_message_in_postgres
 from routes.notifications import send_push_notification
 from publisher.publisher import connected_users
-
 from config import (
     EXCHANGE_NAME,
     NODE_ID,
@@ -16,45 +22,74 @@ from config import (
     RABBIT_PORT,
 )
 
+# the global connection variable
+consumer_connection: Optional[AbstractRobustConnection] = None
+consumer_channel: Optional[AbstractChannel] = None
+consumer_exchange: Optional[AbstractExchange] = None
+consumer_queue: Optional[AbstractQueue] = None
+
+async def get_consumer_connection():
+    """
+    Ensure a persistent RabbitMQ connection for the consumer.
+    This includes the connection, channel, exchange, and queue.
+    """
+    global consumer_connection, consumer_channel, consumer_exchange, consumer_queue
+
+    if not consumer_connection or consumer_connection.is_closed:
+        logging.info("[chat-consumer] Establishing a new connection...")
+        consumer_connection = await connect_robust(host=RABBIT_HOST, port=RABBIT_PORT)
+
+    if not consumer_channel or consumer_channel.is_closed:
+        logging.info("[chat-consumer] Establishing a new channel...")
+        consumer_channel = await consumer_connection.channel()
+
+    if not consumer_exchange or consumer_exchange.is_closed:
+        logging.info("[chat-consumer] Declaring the exchange...")
+        consumer_exchange = await consumer_channel.declare_exchange(
+            EXCHANGE_NAME, ExchangeType.DIRECT, durable=True
+        )
+
+    if not consumer_queue or consumer_queue.is_closed:
+        queue_name = f"{NODE_ID}-queue"
+        logging.info("[chat-consumer] Declaring the queue: %s", queue_name)
+        consumer_queue = await consumer_channel.declare_queue(queue_name, durable=True)
+        logging.info("[chat-consumer] Binding queue to exchange with routing_key: %s", NODE_ID)
+        await consumer_queue.bind(consumer_exchange, routing_key=NODE_ID)
+
+    return consumer_connection, consumer_channel, consumer_exchange, consumer_queue
+
+
 async def start_consumer():
     """
-    Establishes an aio-pika connection, declares the queue, and starts consuming.
-    Retries the connection if RabbitMQ is not yet available.
+    Establishes an aio-pika connection, declares the queue (and binds it),
+    and starts consuming. Retries the connection if RabbitMQ is not yet available
+    using exponential backoff.
     """
-    retry_delay = 1  # start with 1 second delay
+    retry_delay = 1  # start with 1 second
     while True:
         try:
-            connection = await connect_robust(host=RABBIT_HOST, port=RABBIT_PORT)
-            channel = await connection.channel()
-
-            # Declare exchange & queue
-            exchange = await channel.declare_exchange(
-                EXCHANGE_NAME, ExchangeType.DIRECT, durable=True
-            )
-            queue_name = f"{NODE_ID}-queue"
-            queue = await channel.declare_queue(queue_name, durable=True)
-
-            # Bind queue to exchange with routing_key=NODE_ID
-            await queue.bind(exchange, routing_key=NODE_ID)
-
+            _, channel, exchange, queue = await get_consumer_connection()
+            
             logging.info("[chat-consumer] Waiting for messages (aio-pika consume)...")
-
-            # Start consuming with a message handler
             await queue.consume(on_message, no_ack=False)
 
-            # Keep the task alive; this future never completes unless cancelled.
-            await asyncio.Future()
+            # Keep the task alive; if we exit, consumer stops.
+            await asyncio.Future()  # This future never completes unless cancelled
 
         except asyncio.CancelledError:
             logging.info("[chat-consumer] Consumer task cancelled. Closing connection.")
             break
         except AMQPConnectionError as e:
-            logging.error("[chat-consumer] RabbitMQ connection failed: %s. Retrying in %s seconds...", e, retry_delay)
+            logging.error(
+                "[chat-consumer] RabbitMQ connection failed: %s. Retrying in %s seconds...", 
+                e, retry_delay
+            )
             await asyncio.sleep(retry_delay)
-            retry_delay = min(retry_delay * 2, 30)  # exponential backoff capped at 30 seconds
+            retry_delay = min(retry_delay * 2, 30)  # exponential backoff up to 30s
         except Exception as e:
             logging.error("[chat-consumer] Consumer crashed: %s", e)
             raise
+
 
 async def on_message(message: IncomingMessage):
     """
