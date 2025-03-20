@@ -6,7 +6,7 @@ import asyncio
 
 from dependencies import create_consumer_connection, get_group_members
 from dependencies import store_message_in_redis, store_message_in_postgres
-from services.notifications import send_push_notification
+from routes.notifications import send_push_notification
 from routes.websocket import connected_users
 from config import QUEUE_NAME
 
