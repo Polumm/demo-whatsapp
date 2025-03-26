@@ -1,10 +1,7 @@
 import json
 import logging
-from typing import Dict, Optional
-from fastapi import HTTPException
-from datetime import datetime, timezone
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from fastapi.websockets import WebSocketState
+from typing import Optional
+from fastapi import HTTPException, APIRouter
 from aio_pika import connect_robust, Message, DeliveryMode, ExchangeType
 from aio_pika.abc import (
     AbstractRobustConnection,
@@ -14,90 +11,15 @@ from aio_pika.abc import (
 
 from config import RABBIT_HOST, RABBIT_PORT, EXCHANGE_NAME
 
-from dependencies import (
-    get_node_for_user,
-    get_group_members,
-    update_presence_status,
-)
-
+from dependencies import get_node_for_user, get_group_members
 
 router = APIRouter()
 
-# Track connected users on this node (user_id -> WebSocket)
-connected_users: Dict[str, WebSocket] = {}
 
 # Global references
 publisher_connection: Optional[AbstractRobustConnection] = None
 publisher_channel: Optional[AbstractChannel] = None
 publisher_exchange: Optional[AbstractExchange] = None
-
-
-@router.websocket("/ws/{user_id}")
-async def client_to_mq(websocket: WebSocket, user_id: str):
-    """
-    Main chat-service WebSocket endpoint.
-    1) Accept connection from <gateway-service>.
-    2) On each message, parse JSON and publish to RabbitMQ.
-    3) The background consumer will deliver inbound messages (see consumers/consumer.py).
-    """
-    await websocket.accept()
-    connected_users[user_id] = websocket
-    print(f"[chat-service] User {user_id} connected via WebSocket.")
-
-    # Update presence info
-    await update_presence_status(user_id, "online")
-
-    try:
-        while True:
-            # Read text from gateway => user is sending a chat message
-            message_text = await websocket.receive_text()
-            print(
-                f"[chat-service] Received from user {user_id}: {message_text}"
-            )
-
-            # Parse JSON
-            try:
-                message_dict = json.loads(message_text)
-            except json.JSONDecodeError:
-                # If invalid JSON, just continue or optionally send an error
-                await websocket.send_text("Invalid JSON format.")
-                continue
-
-            # Ensure required fields. Override sender_id, set type & sent_at.
-            if "conversation_id" not in message_dict:
-                await websocket.send_text("Missing conversation_id.")
-                continue
-
-            # The server always trusts its own user_id
-            message_dict["sender_id"] = user_id
-
-            if "type" not in message_dict:
-                message_dict["type"] = "text"
-
-            if "sent_at" not in message_dict:
-                message_dict["sent_at"] = datetime.now(
-                    timezone.utc
-                ).timestamp()
-
-            # Publish to RabbitMQ asynchronously
-            await publish_message(message_dict)
-
-            # Optionally, echo back to confirm
-            # await websocket.send_text("Message published!")
-
-    except WebSocketDisconnect:
-        print(f"[chat-service] User {user_id} disconnected.")
-    finally:
-        # Remove from connected list
-        if user_id in connected_users:
-            del connected_users[user_id]
-
-        # Mark user as offline
-        await update_presence_status(user_id, "offline")
-
-        if websocket.client_state != WebSocketState.DISCONNECTED:
-            await websocket.close()
-        print(f"[chat-service] WebSocket closed for user {user_id}")
 
 
 async def get_publisher_connection():
@@ -130,6 +52,7 @@ async def get_publisher_connection():
 
     return publisher_connection, publisher_channel, publisher_exchange
 
+
 async def publish_message(message_dict: dict):
     """
     Publish a message to our direct exchange with routing_key determined by presence.
@@ -144,7 +67,9 @@ async def publish_message(message_dict: dict):
     receiver_node_id = await get_node_for_user(to_user)
     if not receiver_node_id:
         # user offline or not found; handle offline scenario, store in DB, etc.
-        logging.warning(f"[publish_message] User {to_user} is offline or not found.")
+        logging.warning(
+            f"[publish_message] User {to_user} is offline or not found."
+        )
         return
 
     try:
@@ -154,7 +79,9 @@ async def publish_message(message_dict: dict):
         # Publish message
         body_str = json.dumps(message_dict)
         await exchange.publish(
-            Message(body_str.encode("utf-8"), delivery_mode=DeliveryMode.PERSISTENT),
+            Message(
+                body_str.encode("utf-8"), delivery_mode=DeliveryMode.PERSISTENT
+            ),
             routing_key=receiver_node_id,
         )
         # We do NOT close the connection—it's persistent!
@@ -164,7 +91,9 @@ async def publish_message(message_dict: dict):
         # logging.error("[publish_message] Error: %s. Retrying once...", e)
         # await force_reconnect()
         # then try again
-        raise HTTPException(status_code=500, detail=f"Error publishing message: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Error publishing message: {e}"
+        )
 
 
 async def _publish_group_or_generic(message_dict: dict):
@@ -186,9 +115,14 @@ async def _publish_group_or_generic(message_dict: dict):
 
             body_str = json.dumps(message_dict)
             await exchange.publish(
-                Message(body_str.encode("utf-8"), delivery_mode=DeliveryMode.PERSISTENT),
+                Message(
+                    body_str.encode("utf-8"),
+                    delivery_mode=DeliveryMode.PERSISTENT,
+                ),
                 routing_key=receiver_node_id,
             )
 
     except Exception as e:
-        logging.error("[_publish_group_or_generic] Error publishing group msg: %s", e)
+        logging.error(
+            "[_publish_group_or_generic] Error publishing group msg: %s", e
+        )

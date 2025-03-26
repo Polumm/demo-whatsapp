@@ -14,7 +14,7 @@ from aio_pika.abc import (
 from dependencies import get_group_members
 from dependencies import store_message_in_redis, store_message_in_postgres
 from routes.notifications import send_push_notification
-from publisher.publisher import connected_users
+from routes.websocket import connected_users
 from config import (
     EXCHANGE_NAME,
     NODE_ID,
@@ -59,7 +59,7 @@ async def get_consumer_connection():
     return consumer_connection, consumer_channel, consumer_exchange, consumer_queue
 
 
-async def start_consumer():
+async def consumer_loop():
     """
     Establishes an aio-pika connection, declares the queue (and binds it),
     and starts consuming. Retries the connection if RabbitMQ is not yet available

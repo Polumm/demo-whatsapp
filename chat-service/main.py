@@ -6,9 +6,9 @@ from fastapi import FastAPI
 from models import Base
 from dependencies import engine
 from routes.conversations import router as convo_router
-from publisher.publisher import router as websocket_router
+from routes.websocket import router as websocket_router
 from config import APP_ENV
-from consumers.consumer import start_consumer
+from message_transport.consumer import consumer_loop
 
 
 def create_tables():
@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     # Start the consumer as a background task
     # so it runs in the same event loop
     print("[chat-service] Starting aio-pika consumer task...")
-    app.state.consumer_task = asyncio.create_task(start_consumer())
+    app.state.consumer_task = asyncio.create_task(consumer_loop())
 
     yield  # The app is running here
 
