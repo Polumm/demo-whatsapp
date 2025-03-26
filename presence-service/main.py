@@ -3,7 +3,6 @@ import uvicorn
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from dependencies import Base, engine
-from models import Presence
 from routers import presence
 
 # Environment variable to determine development mode

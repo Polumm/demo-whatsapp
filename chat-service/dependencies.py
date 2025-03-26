@@ -1,5 +1,5 @@
 import json
-import aioredis
+from redis.asyncio import Redis
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -30,8 +30,7 @@ async def get_db():
 
 
 # --- Async Redis Client ---
-redis_pool = aioredis.from_url(f"redis://{REDIS_HOST}:{REDIS_PORT}", decode_responses=True)
-
+redis_pool = Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
 # --- Presence Lookup ---
 async def get_node_for_user(user_id: str):

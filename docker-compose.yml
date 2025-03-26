@@ -184,7 +184,7 @@ services:
       RABBIT_PORT: 5672
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      DATABASE_URL: postgresql://chatuser:chatpass@postgres-chat:5432/chatdb
+      DATABASE_URL: postgresql+asyncpg://chatuser:chatpass@postgres-chat:5432/chatdb
 
 volumes:
   postgres_auth_data:

@@ -3,5 +3,5 @@ uvicorn[standard]
 bcrypt
 pyjwt
 python-dotenv
-sqlalchemy
+sqlalchemy==2.0.29
 psycopg2-binary

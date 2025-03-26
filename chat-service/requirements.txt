@@ -8,7 +8,7 @@ aio-pika==9.1.0  # Async RabbitMQ client (instead of pika)
 # pika  # Not needed (already async)
 
 # --- Caching & PubSub ---
-aioredis    # Works for async via aioredis interface
+redis==5.0.1
 
 # --- Database & ORM ---
 sqlalchemy==2.0.29  # Ensure SQLAlchemy 2.x for full async support
