@@ -39,7 +39,7 @@ services:
       - postgres_auth_data:/var/lib/postgresql/data
 
   auth-service:
-    build: ./auth-service
+    build: ./services/auth-service
     container_name: auth-service
     restart: always
     depends_on:
@@ -69,7 +69,7 @@ services:
   # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
   chat-service-1:
-    build: ./chat-service
+    build: ./services/chat-service
     container_name: chat-service-1
     restart: always
     depends_on:
@@ -90,7 +90,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://chatuser:chatpass@postgres-chat:5432/chatdb
 
   chat-service-2:
-    build: ./chat-service
+    build: ./services/chat-service
     container_name: chat-service-2
     restart: always
     depends_on:
@@ -128,7 +128,7 @@ services:
 
   # ---------- Gateway ----------
   gateway-service:
-    build: ./gateway-service
+    build: ./services/gateway-service
     container_name: gateway-service
     restart: always
     environment:
@@ -155,7 +155,7 @@ services:
       - postgres_presence_data:/var/lib/postgresql/data
 
   presence-service:
-    build: ./presence-service
+    build: ./services/presence-service
     container_name: presence-service
     restart: always
     depends_on:
@@ -168,7 +168,7 @@ services:
 
   # ---------- Persistence-service ----------
   persistence-service:
-    build: ./persistence-service
+    build: ./services/persistence-service
     container_name: persistence-service
     restart: always
     depends_on:
