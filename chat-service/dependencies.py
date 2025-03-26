@@ -1,12 +1,11 @@
 import json
-import uuid
-import redis
+import aioredis
 import httpx
-from datetime import datetime, timezone
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
 
-from models import Message, UsersConversation
+from models import UsersConversation
 from config import (
     NODE_ID,
     REDIS_HOST,
@@ -16,138 +15,90 @@ from config import (
 )
 
 
-engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# --- Async DB Engine Setup ---
+async_engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True
+)
+
+AsyncSessionLocal = sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
+
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
 
 
-def get_db():
-    """
-    Dependency for database session management.
-    Ensures connections are opened/closed properly.
-    """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# --- Async Redis Client ---
+redis_pool = aioredis.from_url(f"redis://{REDIS_HOST}:{REDIS_PORT}", decode_responses=True)
 
 
-# Redis connection
-redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
-
-
-def create_consumer_connection():
-    """
-    (No longer used directly in code, unless you keep
-     a fallback or handle certain edge cases.)
-    You could remove this if you only use aio-pika now.
-    """
-    pass
-
-
+# --- Presence Lookup ---
 async def get_node_for_user(user_id: str):
-    """
-    Query presence-service to find the node_id for a given user (async).
-    Returns None if offline or not found.
-    """
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(f"{PRESENCE_SERVICE_URL}/presence/{user_id}")
             if r.status_code == 200:
                 data = r.json()
-                return data.get("node_id")  # e.g. "node-2"
+                return data.get("node_id")
             else:
                 return None
     except Exception as e:
-        print("[publish_message] Presence lookup error:", e)
+        print("[get_node_for_user] Presence lookup error:", e)
         return None
 
 
+# --- Redis Message Store ---
 async def store_message_in_redis(msg):
-    """
-    Stores a message in Redis using Sorted Sets (ZADD).
-    Messages are sorted by 'sent_at' timestamp for efficient retrieval.
-    """
     cid = str(msg["conversation_id"])
     message_json = json.dumps(msg)
+    score = msg["sent_at"]
 
-    # Use 'sent_at' as the score
-    redis_client.zadd(f"chat:{cid}:messages", {message_json: msg["sent_at"]})
+    try:
+        await redis_pool.zadd(f"chat:{cid}:messages", {message_json: score})
+        await redis_pool.zremrangebyrank(f"chat:{cid}:messages", 0, -101)
+    except Exception as e:
+        print(f"[store_message_in_redis] Redis error: {e}")
 
-    # Optional: remove older messages beyond some threshold
-    redis_client.zremrangebyrank(f"chat:{cid}:messages", 0, -101)  # Keep last 100
 
-
+# --- Fetch Messages from Redis ---
 async def get_recent_messages(conversation_id, count=50):
-    """
-    Fetches the last 'count' messages from Redis for a given conversation.
-    Retrieves them in correct chronological order (oldest to newest).
-    """
-    messages = redis_client.zrange(f"chat:{conversation_id}:messages", -count, -1)
-    return [json.loads(msg) for msg in messages]
+    try:
+        messages = await redis_pool.zrange(f"chat:{conversation_id}:messages", -count, -1)
+        return [json.loads(m) for m in messages]
+    except Exception as e:
+        print(f"[get_recent_messages] Redis error: {e}")
+        return []
 
 
 async def get_messages_in_time_range(conversation_id, start_time, end_time):
-    """
-    Fetches messages from Redis in a specific time range (sorted by timestamp).
-    """
-    messages = redis_client.zrangebyscore(
-        f"chat:{conversation_id}:messages",
-        start_time,  # Start timestamp
-        end_time,    # End timestamp
-    )
-    return [json.loads(msg) for msg in messages]
-
-
-async def store_message_in_postgres(msg_data):
-    """
-    Stores the message in Postgres.
-    """
     try:
-        # Acquire a DB session
-        db: Session = SessionLocal()
-        dt_sent = datetime.fromtimestamp(msg_data["sent_at"], timezone.utc)
-
-        # Build the Message object
-        new_message = Message(
-            id=uuid.uuid4(),
-            conversation_id=msg_data["conversation_id"],
-            user_id=msg_data["sender_id"],
-            content=msg_data.get("content"),
-            type=msg_data["type"],
-            sent_at=dt_sent,
+        messages = await redis_pool.zrangebyscore(
+            f"chat:{conversation_id}:messages",
+            min=start_time,
+            max=end_time
         )
-
-        db.add(new_message)
-        db.commit()
-        db.close()
-        print(f"[chat-consumer] Stored message in Postgres: {msg_data}")
-
+        return [json.loads(m) for m in messages]
     except Exception as e:
-        print(f"[chat-consumer] Error storing message in Postgres: {e}")
+        print(f"[get_messages_in_time_range] Redis error: {e}")
+        return []
 
 
-def get_group_members(conversation_id: str):
-    """
-    Retrieves user_ids from the users_conversation table for the given conversation.
-    """
-    db: Session = SessionLocal()
-    members = (
-        db.query(UsersConversation.user_id)
-        .filter(UsersConversation.conversation_id == conversation_id)
-        .all()
-    )
-    db.close()
-    # each row is a tuple like (UUID(...),), so we flatten:
-    user_ids = [str(row[0]) for row in members]
-    print(f"[chat-consumer] get_group_members({conversation_id}), found {user_ids}")
-    return user_ids
+# --- Group Membership Lookup ---
+async def get_group_members(conversation_id: str):
+    async with AsyncSessionLocal() as session:
+        stmt = select(UsersConversation.user_id).where(
+            UsersConversation.conversation_id == conversation_id
+        )
+        result = await session.execute(stmt)
+        members = result.scalars().all()
+        user_ids = [str(uid) for uid in members]
+        print(f"[get_group_members] Members of {conversation_id}: {user_ids}")
+        return user_ids
 
 
+# --- Presence Status Update ---
 async def update_presence_status(user_id: str, status: str):
-    """
-    Calls the presence-service API (async) to update user status via httpx.
-    """
     payload = {"user_id": user_id, "node_id": NODE_ID, "status": status}
     url = (
         f"{PRESENCE_SERVICE_URL}/presence/online"
@@ -158,12 +109,8 @@ async def update_presence_status(user_id: str, status: str):
         async with httpx.AsyncClient() as client:
             response = await client.post(url, json=payload)
             if response.status_code == 200:
-                print(
-                    f"[presence-service] Updated presence for {user_id} to {status} on {NODE_ID}"
-                )
+                print(f"[update_presence_status] {user_id} marked as {status}")
             else:
-                print(
-                    f"[presence-service] Failed to update presence for {user_id}: {response.text}"
-                )
+                print(f"[update_presence_status] Failed ({response.status_code}): {response.text}")
     except Exception as e:
-        print(f"[presence-service] Error updating presence for {user_id}: {e}")
+        print(f"[update_presence_status] Error: {e}")

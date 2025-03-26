@@ -87,7 +87,7 @@ services:
       RABBIT_PORT: 5672
       EXCHANGE_NAME: "chat-direct-exchange"
       NODE_ID: "node-1"
-      DATABASE_URL: postgresql://chatuser:chatpass@postgres-chat:5432/chatdb
+      DATABASE_URL: postgresql+asyncpg://chatuser:chatpass@postgres-chat:5432/chatdb
 
   chat-service-2:
     build: ./chat-service
@@ -108,7 +108,7 @@ services:
       RABBIT_PORT: 5672
       EXCHANGE_NAME: "chat-direct-exchange"
       NODE_ID: "node-2"
-      DATABASE_URL: postgresql://chatuser:chatpass@postgres-chat:5432/chatdb
+      DATABASE_URL: postgresql+asyncpg://chatuser:chatpass@postgres-chat:5432/chatdb
 
   # ---------- Load Balancer (HAProxy) ----------
   haproxy-lb:
@@ -165,6 +165,26 @@ services:
       PRESENCE_DATABASE_URL: postgresql://presenceuser:presencepass@postgres-presence:5432/presencedb
     ports:
       - "8004:8004"
+
+  # ---------- Persistence-service ----------
+  persistence-service:
+    build: ./persistence-service
+    container_name: persistence-service
+    restart: always
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      postgres-chat:
+        condition: service_started
+    environment:
+      PYTHONUNBUFFERED: 1
+      RABBIT_HOST: rabbitmq
+      RABBIT_PORT: 5672
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DATABASE_URL: postgresql://chatuser:chatpass@postgres-chat:5432/chatdb
 
 volumes:
   postgres_auth_data:

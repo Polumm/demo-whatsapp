@@ -1,15 +1,30 @@
+# --- Web Framework & ASGI Server ---
 fastapi
 uvicorn[standard]
 websockets
-pika
-redis
+
+# --- Messaging & Queueing ---
+aio-pika==9.1.0  # Async RabbitMQ client (instead of pika)
+# pika  # Not needed (already async)
+
+# --- Caching & PubSub ---
+aioredis    # Works for async via aioredis interface
+
+# --- Database & ORM ---
+sqlalchemy==2.0.29  # Ensure SQLAlchemy 2.x for full async support
+asyncpg  # Async PostgreSQL driver
+# psycopg2-binary  # Not needed (already async)
+
+# --- Auth ---
 pyjwt
-sqlalchemy
-psycopg2-binary
+
+# --- HTTP Clients ---
+httpx==0.27.0  # Used for async HTTP calls (presence, etc.)
+requests  # Optional (if you use sync HTTP calls elsewhere)
+
+# --- Testing ---
 pytest
-httpx
-asyncio
 pytest-asyncio
-requests
-aio-pika
-httpx
+
+# --- Core Python Async Support ---
+asyncio  # Usually not needed explicitly, part of Python stdlib

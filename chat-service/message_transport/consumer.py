@@ -11,10 +11,11 @@ from aio_pika.abc import (
     AbstractQueue,
 )
 
+from message_transport.persistor import send_to_persistence_queue
 from dependencies import get_group_members
-from dependencies import store_message_in_redis, store_message_in_postgres
 from routes.notifications import send_push_notification
 from routes.websocket import connected_users
+
 from config import (
     EXCHANGE_NAME,
     NODE_ID,
@@ -128,7 +129,7 @@ async def on_message(message: IncomingMessage):
         await _group_broadcast(participants, msg_data)
 
     # Store message in Redis, Postgres concurrently
-    await _storage_tasks(msg_data)
+    await send_to_persistence_queue(msg_data)
 
     # Acknowledge last, so if something fails we can retry
     await message.ack()
@@ -154,20 +155,3 @@ async def _group_broadcast(participants, msg_data):
             await _deliver_message(ws, msg_data)
         else:
             await send_push_notification(p_str, msg_data)
-
-
-async def _storage_tasks(msg_data):
-    """
-    Stores message in Redis & Postgres concurrently.
-    """
-    try:
-        await store_message_in_redis(msg_data)
-        print("[chat-consumer] Successfully stored message in Redis.")
-    except Exception as e:
-        print("[chat-consumer] Redis store error:", e)
-
-    try:
-        await store_message_in_postgres(msg_data)
-        print("[chat-consumer] Successfully stored message in Postgres.")
-    except Exception as e:
-        print("[chat-consumer] Postgres store error:", e)
