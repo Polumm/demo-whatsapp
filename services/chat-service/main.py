@@ -9,8 +9,13 @@ from dependencies import async_engine as engine
 
 from routes.conversations import router as convo_router
 from routes.websocket import router as websocket_router
+from routes.message_read import router as message_read_router
+
 from config import APP_ENV
 from message_transport.consumer import consumer_loop
+
+
+
 
 
 @asynccontextmanager
@@ -37,7 +42,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.include_router(websocket_router)
 app.include_router(convo_router)
-
+app.include_router(message_read_router)
 
 @app.get("/")
 async def health_check():
