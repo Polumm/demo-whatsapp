@@ -4,3 +4,4 @@ websockets
 pika
 requests
 pyjwt
+httpx

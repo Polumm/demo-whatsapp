@@ -101,3 +101,16 @@ async def get_conversation(
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     return convo
+
+
+async def get_user_conversations(user_id: str, db: AsyncSession) -> list[str]:
+    """
+    Returns all conversation IDs the user is part of.
+    """
+    stmt = select(UsersConversation.conversation_id).where(
+        UsersConversation.user_id == uuid.UUID(user_id)
+    )
+    result = await db.execute(stmt)
+    conversation_ids = result.scalars().all()
+
+    return [str(cid) for cid in conversation_ids]

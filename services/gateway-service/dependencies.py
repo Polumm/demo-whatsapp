@@ -8,6 +8,12 @@ from config import (
 )
 from fastapi import Request, WebSocket, HTTPException
 from typing import Optional
+import httpx
+
+shared_httpx_client = httpx.AsyncClient(timeout=10)
+
+async def get_http_client() -> httpx.AsyncClient:
+    return shared_httpx_client
 
 
 def _extract_jwt(

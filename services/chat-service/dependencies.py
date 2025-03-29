@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 from redis.asyncio import Redis
 import httpx
@@ -5,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-from models import UsersConversation
+from models import UsersConversation, Message
 from config import (
     NODE_ID,
     REDIS_HOST,
@@ -45,19 +46,6 @@ async def get_node_for_user(user_id: str):
     except Exception as e:
         print("[get_node_for_user] Presence lookup error:", e)
         return None
-
-
-# --- Redis Message Store ---
-async def store_message_in_redis(msg):
-    cid = str(msg["conversation_id"])
-    message_json = json.dumps(msg)
-    score = msg["sent_at"]
-
-    try:
-        await redis_pool.zadd(f"chat:{cid}:messages", {message_json: score})
-        await redis_pool.zremrangebyrank(f"chat:{cid}:messages", 0, -101)
-    except Exception as e:
-        print(f"[store_message_in_redis] Redis error: {e}")
 
 
 # --- Fetch Messages from Redis ---
@@ -113,3 +101,47 @@ async def update_presence_status(user_id: str, status: str):
                 print(f"[update_presence_status] Failed ({response.status_code}): {response.text}")
     except Exception as e:
         print(f"[update_presence_status] Error: {e}")
+
+
+# --- Synchronize Messages from Redis or Redis + Postgres---
+async def sync_messages(conversation_id: str, user_id: str, since: float, limit=100):
+    # Step 1: Try Redis first
+    redis_messages = await get_messages_in_time_range(conversation_id, since, end_time=9999999999)
+
+    # Update "since" to latest message in Redis to avoid overlap
+    try:
+        latest_redis_ts = redis_messages[-1]["sent_at"]
+    except (KeyError, TypeError, IndexError) as e:
+        print(f"[sync_messages] Malformed Redis message: {e}")
+        latest_redis_ts = since
+
+
+    # Step 2: Query Postgres ONLY for messages newer than the latest Redis one
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .where(Message.sent_at > datetime.fromtimestamp(latest_redis_ts))
+            .order_by(Message.sent_at.asc())
+            .limit(limit - len(redis_messages))
+        )
+        result = await session.execute(stmt)
+        db_messages = result.scalars().all()
+
+        db_formatted = [
+            {
+                "id": str(m.id),
+                "conversation_id": str(m.conversation_id),
+                "user_id": str(m.user_id),
+                "content": m.content,
+                "type": m.type,
+                "sent_at": m.sent_at.timestamp()
+            }
+            for m in db_messages
+        ]
+
+    # Step 3: Combine the two — no overlap = no dedup needed
+    combined = redis_messages + db_formatted
+    combined.sort(key=lambda x: x["sent_at"])  # Optional: sort if needed
+
+    return combined

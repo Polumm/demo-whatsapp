@@ -3,9 +3,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
 
-from dependencies import get_db
+from typing import List, Optional
+from dependencies import get_db, sync_messages
+from routes.conversations import  get_user_conversations
 from models import Message
-
 
 router = APIRouter()
 
@@ -47,3 +48,31 @@ async def get_paginated_messages(
         }
         for m in messages
     ]
+
+
+@router.get("/sync")
+async def sync_user_messages(
+    user_id: str,
+    since: float = Query(..., description="Last seen timestamp (Unix)"),
+    conversations: Optional[List[str]] = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Sync unread messages for user.
+    Checks Redis first, then Postgres if needed.
+    """
+    synced = []
+
+    conv_ids = conversations or await get_user_conversations(user_id, db)
+    for cid in conv_ids:
+        try:
+            messages = await sync_messages(cid, user_id, since)
+            synced.append({
+                "conversation_id": cid,
+                "messages": messages
+            })
+        except Exception as e:
+            print(f"[sync_user_messages] Error syncing {cid}: {e}")
+            continue
+
+    return {"synced": synced}
