@@ -60,45 +60,85 @@ def verify_token(token: str):
 
 
 def role_required(*allowed_roles):
-    """
-    Decorator to enforce role-based authentication for both HTTP and WebSocket endpoints.
-    """
-
     def decorator(endpoint_func):
         @wraps(endpoint_func)
-        async def wrapper(
-            *args,
-            request: Optional[WebSocket] = None,
-            websocket: Optional[WebSocket] = None,
-            **kwargs,
-        ):
+        async def wrapper(*args, **kwargs):
+            request = None
+            websocket = None
+
+            # Figure out if we have a Request or WebSocket in args/kwargs
+            for arg in args:
+                if isinstance(arg, Request):
+                    request = arg
+                elif isinstance(arg, WebSocket):
+                    websocket = arg
+
+            if 'request' in kwargs and isinstance(kwargs['request'], Request):
+                request = kwargs['request']
+            if 'websocket' in kwargs and isinstance(kwargs['websocket'], WebSocket):
+                websocket = kwargs['websocket']
+
             try:
                 token = _extract_jwt(request, websocket)
                 decoded_token = verify_token(token)
                 user_role = decoded_token.get("role")
 
                 if not user_role or user_role not in allowed_roles:
-                    raise Exception("Insufficient role")
+                    raise HTTPException(status_code=403, detail="Insufficient role")
 
-                # Attach decoded token to request or websocket
-                if request:
+                # Attach token info and continue
+                if request is not None:
                     request.state.token_data = decoded_token
-                    return await endpoint_func(
-                        request=request, *args, **kwargs
-                    )
-                elif websocket:
+                if websocket is not None:
                     websocket.state.token_data = decoded_token
-                    return await endpoint_func(
-                        websocket=websocket, *args, **kwargs
-                    )
 
-            except Exception as e:  # Catch general exceptions
+                return await endpoint_func(*args, **kwargs)
+
+            except Exception as e:
                 if websocket:
-                    await websocket.close(
-                        code=1008
-                    )  # Close WebSocket properly
-                return  # Ensure the function exits without an error
+                    await websocket.close(code=1008)
+                    return
+                else:
+                    # For HTTP calls, raise HTTP 401
+                    raise HTTPException(status_code=401, detail=str(e))
 
         return wrapper
+    return decorator
 
+
+def self_user_only(user_id_param: str = "user_id"):
+    """
+    Verifies that the user_id in the request path or query matches the JWT.
+    """
+    def decorator(endpoint_func):
+        @wraps(endpoint_func)
+        async def wrapper(*args, **kwargs):
+            request: Optional[Request] = None
+
+            # 1) Figure out which arg is the request
+            for arg in args:
+                if isinstance(arg, Request):
+                    request = arg
+
+            if 'request' in kwargs and isinstance(kwargs['request'], Request):
+                request = kwargs['request']
+
+            if not request:
+                raise HTTPException(500, "Request object missing")
+
+            # 2) Pull token_data from request.state
+            token_data = getattr(request.state, "token_data", None)
+            if not token_data:
+                raise HTTPException(401, "Unauthorized")
+
+            # 3) Compare user ID
+            user_id_from_token = token_data.get("user_id")
+            # If your path param is "user_id" in your route, then it’s probably in kwargs:
+            user_id_from_query = kwargs.get(user_id_param)
+
+            if str(user_id_from_token) != str(user_id_from_query):
+                raise HTTPException(403, "Forbidden: Not your data")
+
+            return await endpoint_func(*args, **kwargs)
+        return wrapper
     return decorator

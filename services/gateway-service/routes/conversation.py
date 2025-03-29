@@ -1,11 +1,11 @@
 from typing import Optional, List
 import uuid
 import urllib.parse
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 import httpx
 from config import CHAT_SERVICE_URL
-from dependencies import get_http_client
+from dependencies import get_http_client, role_required, self_user_only
 
 router = APIRouter()
 
@@ -88,8 +88,11 @@ async def get_paginated_messages(
         raise HTTPException(status_code=500, detail=f"Chat service error: {str(e)}")
 
 
+@role_required("admin", "user")
+@self_user_only("user_id")  # match query param name here
 @router.get("/sync")
 async def sync_user_messages(
+    request: Request,
     user_id: str,
     since: float,
     conversations: Optional[List[str]] = None,
