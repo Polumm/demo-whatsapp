@@ -1,9 +1,13 @@
 import json
 from aio_pika import connect_robust, ExchangeType, Message, DeliveryMode
+from typing import Optional
+from aio_pika.abc import AbstractExchange
 
 from config import RABBIT_HOST, RABBIT_PORT
 
-_persistence_exchange = None
+
+_persistence_exchange: Optional[AbstractExchange] = None
+
 
 async def send_to_persistence_queue(msg_data):
     global _persistence_exchange
@@ -18,5 +22,5 @@ async def send_to_persistence_queue(msg_data):
     body = json.dumps(msg_data).encode()
     await _persistence_exchange.publish(
         Message(body, delivery_mode=DeliveryMode.PERSISTENT),
-        routing_key="store"
+        routing_key="store",
     )
