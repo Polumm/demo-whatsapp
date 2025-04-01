@@ -12,15 +12,19 @@ router = APIRouter()
 class PresenceStatus(BaseModel):
     user_id: uuid.UUID
     node_id: str
+    device_id: str
     status: str  # "online" or "offline"
 
 @router.post("/online")
 def user_online(payload: PresenceStatus, db: Session = Depends(get_db)):
+    """
+    Mark user as online.
+    """
     if payload.status.lower() != "online":
         raise HTTPException(status_code=400, detail="Use status='online' or call /offline endpoint.")
-
-    record = db.query(Presence).filter_by(user_id=payload.user_id).first()
+    
     now_utc = datetime.now(timezone.utc)
+    record = db.query(Presence).filter_by(user_id=payload.user_id, device_id=payload.device_id).first()
 
     if record:
         record.node_id = payload.node_id
@@ -30,16 +34,16 @@ def user_online(payload: PresenceStatus, db: Session = Depends(get_db)):
         record = Presence(
             user_id=payload.user_id,
             node_id=payload.node_id,
+            device_id=payload.device_id,
             status="online",
             last_online=now_utc
         )
         db.add(record)
 
-    db.commit()  # Ensures the record is stored
-    db.refresh(record)  # Ensures latest data is available immediately
+    db.commit()
+    db.refresh(record)
 
     return {"detail": "User is online"}
-
 
 @router.post("/offline")
 def user_offline(payload: PresenceStatus, db: Session = Depends(get_db)):
@@ -48,27 +52,31 @@ def user_offline(payload: PresenceStatus, db: Session = Depends(get_db)):
     """
     if payload.status.lower() != "offline":
         raise HTTPException(status_code=400, detail="Use status='offline' or call /online endpoint.")
-    
-    record = db.query(Presence).filter_by(user_id=payload.user_id).first()
+
+    now_utc = datetime.now(timezone.utc)
+    record = db.query(Presence).filter_by(user_id=payload.user_id, device_id=payload.device_id).first()
+
     if not record:
-        # create record with offline? or error
         record = Presence(
             user_id=payload.user_id,
             node_id=payload.node_id,
+            device_id=payload.device_id,
             status="offline",
+            last_online=now_utc
         )
         db.add(record)
     else:
         record.node_id = payload.node_id
         record.status = "offline"
-        record.last_online = datetime.now(timezone.utc)
+        record.last_online = now_utc
+
     db.commit()
     return {"detail": "User is offline"}
 
 class HeartbeatModel(BaseModel):
     user_id: uuid.UUID
     node_id: str
-    # optional timestamp
+    device_id: str
 
 @router.post("/heartbeat")
 def heartbeat(payload: HeartbeatModel, db: Session = Depends(get_db)):
@@ -77,18 +85,22 @@ def heartbeat(payload: HeartbeatModel, db: Session = Depends(get_db)):
     """
     record = db.query(Presence).filter_by(user_id=payload.user_id).first()
     now_utc = datetime.now(timezone.utc)
+    record = db.query(Presence).filter_by(user_id=payload.user_id, device_id=payload.device_id).first()
+
     if not record:
         record = Presence(
             user_id=payload.user_id,
             node_id=payload.node_id,
+            device_id=payload.device_id,
             status="online",
             last_online=now_utc
         )
         db.add(record)
     else:
         record.node_id = payload.node_id
-        record.status = "online"  # refresh status
+        record.status = "online"
         record.last_online = now_utc
+
     db.commit()
     return {"detail": "Heartbeat updated"}
 
@@ -102,14 +114,17 @@ def get_presence(user_id: str, db: Session = Depends(get_db)):
         user_uuid = uuid.UUID(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user UUID")
-    
-    record = db.query(Presence).filter_by(user_id=user_uuid).first()
-    if not record:
+
+    records = db.query(Presence).filter_by(user_id=user_uuid).all()
+    if not records:
         raise HTTPException(status_code=404, detail="No presence record found")
 
-    return {
-        "user_id": str(record.user_id),
-        "node_id": record.node_id,
-        "status": record.status,
-        "last_online": record.last_online.isoformat()
-    }
+    return [
+        {
+            "device_id": record.device_id,
+            "node_id": record.node_id,
+            "status": record.status,
+            "last_online": record.last_online.isoformat()
+        }
+        for record in records
+    ]

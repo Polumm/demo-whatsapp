@@ -8,12 +8,12 @@ from dependencies import update_presence_status
 
 router = APIRouter()
 
-# Track connected users on this node (user_id -> WebSocket)
-connected_users: Dict[str, WebSocket] = {}
+# user_id -> {device_id -> WebSocket}
+connected_users: Dict[str, Dict[str, WebSocket]] = {}  
 
 
-@router.websocket("/ws/{user_id}")
-async def ws_client_server(websocket: WebSocket, user_id: str):
+@router.websocket("/ws/{user_id}/{device_id}")
+async def ws_client_server(websocket: WebSocket, user_id: str, device_id: str):
     """
     Main chat-service WebSocket endpoint that connect client with a server node.
     1) Accept connection from <gateway-service>.
@@ -22,11 +22,14 @@ async def ws_client_server(websocket: WebSocket, user_id: str):
         (see message_transport/consumer.py).
     """
     await websocket.accept()
-    connected_users[user_id] = websocket
-    print(f"[chat-service] User {user_id} connected via WebSocket.")
+    
+    if user_id not in connected_users:
+        connected_users[user_id] = {}
+    connected_users[user_id][device_id] = websocket
+    print(f"[chat-service] User {user_id} connected from device {device_id}.")
 
     # Update presence info
-    await update_presence_status(user_id, "online")
+    await update_presence_status(user_id, "online", device_id=device_id)
 
     try:
         while True:
@@ -67,15 +70,16 @@ async def ws_client_server(websocket: WebSocket, user_id: str):
             # await websocket.send_text("Message published!")
 
     except WebSocketDisconnect:
-        print(f"[chat-service] User {user_id} disconnected.")
+        print(f"[chat-service] User {user_id} on device {device_id} disconnected.")
     finally:
         # Remove from connected list
-        if user_id in connected_users:
-            del connected_users[user_id]
+        connected_users[user_id].pop(device_id, None)
+        if not connected_users[user_id]:
+            connected_users.pop(user_id)
 
         # Mark user as offline
-        await update_presence_status(user_id, "offline")
-
+        await update_presence_status(user_id, "offline", device_id=device_id)
+        
         if websocket.client_state != WebSocketState.DISCONNECTED:
             await websocket.close()
-        print(f"[chat-service] WebSocket closed for user {user_id}")
+        print(f"[chat-service] WebSocket closed for {user_id}/{device_id}")

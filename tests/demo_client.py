@@ -118,17 +118,25 @@ def call(
 @app.command()
 def ws(
     user: str = typer.Option(..., "--user", "-u"),
-    user_id: str = typer.Option(..., "--user-id")
+    user_id: str = typer.Option(..., "--user-id"),
+    device_id: str = typer.Option(None, "--device-id", "-d", help="Unique device ID (auto-generated if not provided)")
 ):
-    """Connect to WebSocket using saved token."""
+    """Connect to WebSocket using saved token and device ID."""
+
+    import uuid
+    if not device_id:
+        device_id = f"dev-{uuid.uuid4().hex[:8]}"
+
     token = load_token(user)
-    url = f"ws://localhost:8001/api/ws/{user_id}"
+    url = f"ws://localhost:8001/api/ws/{user_id}?device_id={device_id}"  # for gateway
+    # If chat-service is called directly (not behind gateway):
+    # url = f"ws://localhost:8002/ws/{user_id}/{device_id}"
 
     async def keepalive(ws):
         while True:
             try:
                 await ws.ping()
-                await asyncio.sleep(20)  # Ping every 20 seconds
+                await asyncio.sleep(20)
             except Exception:
                 break
 
@@ -144,24 +152,22 @@ def ws(
     async def send_messages(ws):
         loop = asyncio.get_running_loop()
         while True:
-            # Use run_in_executor to prevent input() from blocking the event loop.
             msg = await loop.run_in_executor(None, input, "[you] > ")
             await ws.send(msg)
 
     async def connect_ws():
         try:
-            # Pass the token as a subprotocol (without the "Bearer " prefix)
             async with connect(url, subprotocols=[token]) as ws:
-                print(f"[bold green]🟢 Connected to WebSocket for {user_id}[/bold green]")
+                print(f"[bold green]🟢 Connected as device {device_id}[/bold green]")
                 receiver_task = asyncio.create_task(read_messages(ws))
                 sender_task = asyncio.create_task(send_messages(ws))
                 keepalive_task = asyncio.create_task(keepalive(ws))
-                # Run all tasks concurrently. They will run until the connection is closed.
                 await asyncio.gather(receiver_task, sender_task, keepalive_task)
         except Exception as e:
             print(f"[bold red]❌ WebSocket error:[/bold red] {e}")
 
     asyncio.run(connect_ws())
+
 
 if __name__ == "__main__":
     app()

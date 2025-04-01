@@ -1,4 +1,4 @@
-# 🧪 Demo WhatsApp Gateway - Testing Guide
+# 🧪 Demo WhatsApp Gateway - Testing Guide 
 
 This guide covers how to test the Gateway service and downstream Chat APIs using both:
 
@@ -39,19 +39,21 @@ Copy the `access_token` from each response.
 
 ## 🌐 2. WebSocket Testing with `wscat`
 
+Now supports `device_id` via query parameter:
+
 ```bash
-wscat -c ws://localhost:8001/api/ws/<user_id> \
+wscat -c "ws://localhost:8001/api/ws/<user_id>?device_id=<device_id>" \
   -H "sec-websocket-protocol: <access_token>"
 ```
 
 ### Example:
 
 ```bash
-wscat -c ws://localhost:8001/api/ws/22e73da1-... \
+wscat -c "ws://localhost:8001/api/ws/22e73da1-...Alice?device_id=dev-alice-laptop" \
   -H "sec-websocket-protocol: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
 
-> 🟡 Do **NOT** include `"Bearer "` prefix!
+> 🟡 Do **NOT** include `"Bearer "` prefix in WebSocket headers!
 
 ---
 
@@ -101,9 +103,18 @@ python tests/demo_client.py login --username Bob --password Bob
 ### ✅ Connect via WebSocket
 
 ```bash
-python tests/demo_client.py ws --user Alice --user-id 22e73da1-...
-python tests/demo_client.py ws --user Bob --user-id fa23d151-...
+python tests/demo_client.py ws \
+  --user Alice \
+  --user-id 22e73da1-... \
+  --device-id dev-alice-laptop
+
+python tests/demo_client.py ws \
+  --user Bob \
+  --user-id fa23d151-... \
+  --device-id dev-bob-phone
 ```
+
+> If `--device-id` is not provided, a random one is generated.
 
 ### ✅ Sync Messages
 
@@ -137,6 +148,7 @@ python tests/demo_client.py call \
 
 - WebSocket JWTs must be passed via the `sec-websocket-protocol` header (raw token, no `Bearer`).
 - HTTP JWTs use the `Authorization: Bearer <token>` header.
+- WebSocket connections **must include `device_id`**.
 - Timestamps must be UNIX-style (`int` or `float`). Use `"10 minutes ago"` with `demo_client.py`.
 
 ---
@@ -148,4 +160,4 @@ python tests/demo_client.py call \
 | `tests/demo_client.py`         | Custom CLI for login, sync, WebSocket  |
 | `tests/tmp/.tokens.json`       | Stores JWTs locally                    |
 | `services/gateway-service/...` | FastAPI decorators + JWT verification  |
-
+```

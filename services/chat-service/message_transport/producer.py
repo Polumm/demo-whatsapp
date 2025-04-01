@@ -11,7 +11,7 @@ from aio_pika.abc import (
 
 from config import RABBIT_HOST, RABBIT_PORT, EXCHANGE_NAME
 
-from dependencies import get_node_for_user, get_group_members
+from dependencies import get_nodes_for_user, get_group_members
 
 router = APIRouter()
 
@@ -64,12 +64,10 @@ async def publish_message(message_dict: dict):
         return
 
     # Determine which node the receiving user is on
-    receiver_node_id = await get_node_for_user(to_user)
-    if not receiver_node_id:
+    receiver_node_ids = await get_nodes_for_user(to_user)
+    if not receiver_node_ids:
         # user offline or not found; handle offline scenario, store in DB, etc.
-        logging.warning(
-            f"[publish_message] User {to_user} is offline or not found."
-        )
+        logging.warning(f"[publish_message] No active devices found for user {to_user}")
         return
 
     try:
@@ -78,12 +76,11 @@ async def publish_message(message_dict: dict):
 
         # Publish message
         body_str = json.dumps(message_dict)
-        await exchange.publish(
-            Message(
-                body_str.encode("utf-8"), delivery_mode=DeliveryMode.PERSISTENT
-            ),
-            routing_key=receiver_node_id,
-        )
+        for node_id in receiver_node_ids:
+            await exchange.publish(
+                Message(body_str.encode("utf-8"), delivery_mode=DeliveryMode.PERSISTENT),
+                routing_key=node_id,
+            )
         # We do NOT close the connection—it's persistent!
 
     except Exception as e:
@@ -106,23 +103,18 @@ async def _publish_group_or_generic(message_dict: dict):
 
     try:
         _, _, exchange = await get_publisher_connection()
+        body_str = json.dumps(message_dict)
 
         for user_id in members:
-            receiver_node_id = await get_node_for_user(str(user_id))
-            if not receiver_node_id:
-                # user offline
+            receiver_node_ids = await get_nodes_for_user(str(user_id))
+            if not receiver_node_ids:
                 continue
 
-            body_str = json.dumps(message_dict)
-            await exchange.publish(
-                Message(
-                    body_str.encode("utf-8"),
-                    delivery_mode=DeliveryMode.PERSISTENT,
-                ),
-                routing_key=receiver_node_id,
-            )
+            for node_id in receiver_node_ids:
+                await exchange.publish(
+                    Message(body_str.encode("utf-8"), delivery_mode=DeliveryMode.PERSISTENT),
+                    routing_key=node_id,
+                )
 
     except Exception as e:
-        logging.error(
-            "[_publish_group_or_generic] Error publishing group msg: %s", e
-        )
+        logging.error("[_publish_group_or_generic] Error publishing group msg: %s", e)

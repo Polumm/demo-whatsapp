@@ -34,18 +34,18 @@ async def get_db():
 redis_pool = Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
 # --- Presence Lookup ---
-async def get_node_for_user(user_id: str):
+async def get_nodes_for_user(user_id: str):
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(f"{PRESENCE_SERVICE_URL}/presence/{user_id}")
             if r.status_code == 200:
-                data = r.json()
-                return data.get("node_id")
+                data = r.json()  # should now be a list of device presence records
+                return [entry["node_id"] for entry in data if entry.get("status") == "online"]
             else:
-                return None
+                return []
     except Exception as e:
-        print("[get_node_for_user] Presence lookup error:", e)
-        return None
+        print("[get_nodes_for_user] Presence lookup error:", e)
+        return []
 
 
 # --- Fetch Messages from Redis ---
@@ -84,9 +84,14 @@ async def get_group_members(conversation_id: str):
         return user_ids
 
 
-# --- Presence Status Update ---
-async def update_presence_status(user_id: str, status: str):
-    payload = {"user_id": user_id, "node_id": NODE_ID, "status": status}
+# --- Presence Status Update --- 
+async def update_presence_status(user_id: str, status: str, device_id: str):
+    payload = {
+        "user_id": user_id,
+        "device_id": device_id,
+        "node_id": NODE_ID,
+        "status": status
+    }
     url = (
         f"{PRESENCE_SERVICE_URL}/presence/online"
         if status == "online"
@@ -96,7 +101,7 @@ async def update_presence_status(user_id: str, status: str):
         async with httpx.AsyncClient() as client:
             response = await client.post(url, json=payload)
             if response.status_code == 200:
-                print(f"[update_presence_status] {user_id} marked as {status}")
+                print(f"[update_presence_status] {user_id}:{device_id} marked as {status}")
             else:
                 print(f"[update_presence_status] Failed ({response.status_code}): {response.text}")
     except Exception as e:
