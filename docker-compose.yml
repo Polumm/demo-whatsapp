@@ -141,28 +141,29 @@ services:
       - haproxy-lb
 
   # ---------- Presence-Service + DB ----------
-  postgres-presence:
-    image: postgres:latest
-    container_name: postgres-presence
-    restart: always
-    environment:
-      POSTGRES_USER: presenceuser
-      POSTGRES_PASSWORD: presencepass
-      POSTGRES_DB: presencedb
-    ports:
-      - "5435:5432"
-    volumes:
-      - postgres_presence_data:/var/lib/postgresql/data
+  # postgres-presence:
+  #   image: postgres:latest
+  #   container_name: postgres-presence
+  #   restart: always
+  #   environment:
+  #     POSTGRES_USER: presenceuser
+  #     POSTGRES_PASSWORD: presencepass
+  #     POSTGRES_DB: presencedb
+  #   ports:
+  #     - "5435:5432"
+  #   volumes:
+  #     - postgres_presence_data:/var/lib/postgresql/data
 
   presence-service:
     build: ./services/presence-service
     container_name: presence-service
     restart: always
     depends_on:
-      - postgres-presence
+      - redis
     environment:
       PYTHONUNBUFFERED: 1
-      PRESENCE_DATABASE_URL: postgresql://presenceuser:presencepass@postgres-presence:5432/presencedb
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     ports:
       - "8004:8004"
 

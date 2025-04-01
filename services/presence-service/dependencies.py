@@ -1,16 +1,16 @@
 import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+import redis.asyncio as redis
 
-DATABASE_URL = os.getenv("PRESENCE_DATABASE_URL", "postgresql://presenceuser:presencepass@postgres-presence:5432/presencedb")
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
-engine = create_engine(DATABASE_URL, echo=False)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-def get_db():
-    db = SessionLocal()
+async def get_redis():
+    """
+    FastAPI dependency that yields an async Redis client.
+    """
+    client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
     try:
-        yield db
+        yield client
     finally:
-        db.close()
+        # Optional: close the connection when done
+        await client.close()

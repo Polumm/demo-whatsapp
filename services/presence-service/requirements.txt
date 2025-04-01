@@ -7,3 +7,4 @@ pytest
 pytest-asyncio
 requests
 httpx
+redis==5.0.1

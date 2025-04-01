@@ -1,11 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 from datetime import datetime, timezone
-
-from dependencies import get_db
-from models import Presence
 import uuid
+
+from dependencies import get_redis
 
 router = APIRouter()
 
@@ -16,62 +14,54 @@ class PresenceStatus(BaseModel):
     status: str  # "online" or "offline"
 
 @router.post("/online")
-def user_online(payload: PresenceStatus, db: Session = Depends(get_db)):
+async def user_online(payload: PresenceStatus, redis_client = Depends(get_redis)):
     """
-    Mark user as online.
+    Mark user/device as online in Redis.
     """
     if payload.status.lower() != "online":
         raise HTTPException(status_code=400, detail="Use status='online' or call /offline endpoint.")
-    
+
     now_utc = datetime.now(timezone.utc)
-    record = db.query(Presence).filter_by(user_id=payload.user_id, device_id=payload.device_id).first()
+    user_key = f"presence:{str(payload.user_id)}"
+    device_key = f"{user_key}:{payload.device_id}"
 
-    if record:
-        record.node_id = payload.node_id
-        record.status = "online"
-        record.last_online = now_utc
-    else:
-        record = Presence(
-            user_id=payload.user_id,
-            node_id=payload.node_id,
-            device_id=payload.device_id,
-            status="online",
-            last_online=now_utc
-        )
-        db.add(record)
+    # 1) Add device_id to a set of devices for that user
+    await redis_client.sadd(f"{user_key}:devices", payload.device_id)
 
-    db.commit()
-    db.refresh(record)
+    # 2) Store presence data in a hash
+    await redis_client.hset(device_key, mapping={
+        "node_id": payload.node_id,
+        "device_id": payload.device_id,
+        "status": "online",
+        "last_online": now_utc.isoformat()
+    })
 
-    return {"detail": "User is online"}
+    return {"detail": "User/device is online"}
 
 @router.post("/offline")
-def user_offline(payload: PresenceStatus, db: Session = Depends(get_db)):
+async def user_offline(payload: PresenceStatus, redis_client = Depends(get_redis)):
     """
-    Mark user as offline.
+    Mark user/device as offline in Redis.
     """
     if payload.status.lower() != "offline":
         raise HTTPException(status_code=400, detail="Use status='offline' or call /online endpoint.")
 
     now_utc = datetime.now(timezone.utc)
-    record = db.query(Presence).filter_by(user_id=payload.user_id, device_id=payload.device_id).first()
+    user_key = f"presence:{str(payload.user_id)}"
+    device_key = f"{user_key}:{payload.device_id}"
 
-    if not record:
-        record = Presence(
-            user_id=payload.user_id,
-            node_id=payload.node_id,
-            device_id=payload.device_id,
-            status="offline",
-            last_online=now_utc
-        )
-        db.add(record)
-    else:
-        record.node_id = payload.node_id
-        record.status = "offline"
-        record.last_online = now_utc
+    # Make sure device is tracked
+    await redis_client.sadd(f"{user_key}:devices", payload.device_id)
 
-    db.commit()
-    return {"detail": "User is offline"}
+    # Update the hash to offline
+    await redis_client.hset(device_key, mapping={
+        "node_id": payload.node_id,
+        "device_id": payload.device_id,
+        "status": "offline",
+        "last_online": now_utc.isoformat()
+    })
+
+    return {"detail": "User/device is offline"}
 
 class HeartbeatModel(BaseModel):
     user_id: uuid.UUID
@@ -79,52 +69,61 @@ class HeartbeatModel(BaseModel):
     device_id: str
 
 @router.post("/heartbeat")
-def heartbeat(payload: HeartbeatModel, db: Session = Depends(get_db)):
+async def heartbeat(payload: HeartbeatModel, redis_client = Depends(get_redis)):
     """
-    If you want a heartbeat approach to keep user as 'online'.
+    Keep user/device as 'online' with a heartbeat.
     """
-    record = db.query(Presence).filter_by(user_id=payload.user_id).first()
     now_utc = datetime.now(timezone.utc)
-    record = db.query(Presence).filter_by(user_id=payload.user_id, device_id=payload.device_id).first()
+    user_key = f"presence:{str(payload.user_id)}"
+    device_key = f"{user_key}:{payload.device_id}"
 
-    if not record:
-        record = Presence(
-            user_id=payload.user_id,
-            node_id=payload.node_id,
-            device_id=payload.device_id,
-            status="online",
-            last_online=now_utc
-        )
-        db.add(record)
-    else:
-        record.node_id = payload.node_id
-        record.status = "online"
-        record.last_online = now_utc
+    # Make sure device is tracked
+    await redis_client.sadd(f"{user_key}:devices", payload.device_id)
 
-    db.commit()
-    return {"detail": "Heartbeat updated"}
+    # Update presence to 'online' again
+    await redis_client.hset(device_key, mapping={
+        "node_id": payload.node_id,
+        "device_id": payload.device_id,
+        "status": "online",
+        "last_online": now_utc.isoformat()
+    })
+
+    return {"detail": "Heartbeat updated (Redis only)"}
+
 
 @router.get("/{user_id}")
-def get_presence(user_id: str, db: Session = Depends(get_db)):
+async def get_presence(user_id: str, redis_client = Depends(get_redis)):
     """
-    Returns presence record for a user.
-    e.g. {status: 'online','offline', node_id:'...','last_online':...}
+    Returns presence records for all devices for a given user_id.
+    e.g. [{"device_id":..., "node_id":..., "status":..., "last_online":...}, ...]
     """
+    # Validate user_id as UUID
     try:
         user_uuid = uuid.UUID(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user UUID")
 
-    records = db.query(Presence).filter_by(user_id=user_uuid).all()
-    if not records:
-        raise HTTPException(status_code=404, detail="No presence record found")
+    user_key = f"presence:{str(user_uuid)}"
+    device_set_key = f"{user_key}:devices"
 
-    return [
-        {
-            "device_id": record.device_id,
-            "node_id": record.node_id,
-            "status": record.status,
-            "last_online": record.last_online.isoformat()
-        }
-        for record in records
-    ]
+    # 1) Get all device_ids for this user
+    devices = await redis_client.smembers(device_set_key)
+    if not devices:
+        raise HTTPException(status_code=404, detail="No presence record found for this user")
+
+    records = []
+    for device_id in devices:
+        device_key = f"{user_key}:{device_id}"
+        data = await redis_client.hgetall(device_key)
+        if data:
+            records.append({
+                "device_id": data.get("device_id"),
+                "node_id": data.get("node_id"),
+                "status": data.get("status"),
+                "last_online": data.get("last_online")
+            })
+
+    if not records:
+        raise HTTPException(status_code=404, detail="No presence data found in Redis")
+
+    return records
