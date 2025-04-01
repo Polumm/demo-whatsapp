@@ -88,9 +88,9 @@ async def get_paginated_messages(
         raise HTTPException(status_code=500, detail=f"Chat service error: {str(e)}")
 
 
+@router.get("/sync")
 @role_required("admin", "user")
 @self_user_only("user_id")  # match query param name here
-@router.get("/sync")
 async def sync_user_messages(
     request: Request,
     user_id: str,

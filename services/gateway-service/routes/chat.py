@@ -3,12 +3,14 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 from config import CHAT_SERVICE_URL
 import websockets
+from dependencies import role_required, self_user_only
 
 router = APIRouter()
 
 
 @router.websocket("/ws/{user_id}")
-# @role_required("admin", "user")
+@role_required("admin", "user")
+@self_user_only("user_id")  # match query param name here
 async def websocket_proxy(websocket: WebSocket, user_id: str):
     """
     WebSocket Proxy in gateway-service.
@@ -31,8 +33,8 @@ async def websocket_proxy(websocket: WebSocket, user_id: str):
                         await chat_ws.send(data)
                 except Exception as e:
                     print(f"[client_to_chat] Error: {e}")
-                    await chat_ws.close()
-                    raise
+                    # await chat_ws.close()
+                    # raise
 
             async def chat_to_client():
                 try:
@@ -41,8 +43,8 @@ async def websocket_proxy(websocket: WebSocket, user_id: str):
                         await websocket.send_text(msg)
                 except Exception as e:
                     print(f"[chat_to_client] Error: {e}")
-                    await websocket.close()
-                    raise
+                    # await websocket.close()
+                    # raise
 
             # Run both forwarding tasks concurrently
             task1 = asyncio.create_task(client_to_chat())

@@ -7,8 +7,9 @@ from config import (
     ALGORITHM,
 )
 from fastapi import Request, WebSocket, HTTPException
-from typing import Optional
+from typing import Optional, Union
 import httpx
+
 
 shared_httpx_client = httpx.AsyncClient(timeout=10)
 
@@ -30,12 +31,9 @@ def _extract_jwt(
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ")[1]
-
     elif websocket:
-        protocol_header = websocket.headers.get("sec-websocket-protocol")
-        if protocol_header and protocol_header.startswith("Bearer "):
-            token = protocol_header.split(" ")[1]
-
+        token = websocket.headers.get("sec-websocket-protocol")
+        
     if not token:
         raise HTTPException(
             status_code=401, detail="Authorization token missing or invalid"
@@ -108,36 +106,39 @@ def role_required(*allowed_roles):
 
 def self_user_only(user_id_param: str = "user_id"):
     """
-    Verifies that the user_id in the request path or query matches the JWT.
+    Verifies that the user_id in the path/query matches the JWT subject (sub),
+    supports both HTTP request and WebSocket.
     """
     def decorator(endpoint_func):
         @wraps(endpoint_func)
         async def wrapper(*args, **kwargs):
-            request: Optional[Request] = None
+            request_or_ws: Optional[Union[Request, WebSocket]] = None
 
-            # 1) Figure out which arg is the request
+            # Detect whether it's a Request or WebSocket
             for arg in args:
-                if isinstance(arg, Request):
-                    request = arg
+                if isinstance(arg, (Request, WebSocket)):
+                    request_or_ws = arg
 
             if 'request' in kwargs and isinstance(kwargs['request'], Request):
-                request = kwargs['request']
+                request_or_ws = kwargs['request']
+            elif 'websocket' in kwargs and isinstance(kwargs['websocket'], WebSocket):
+                request_or_ws = kwargs['websocket']
 
-            if not request:
-                raise HTTPException(500, "Request object missing")
+            if not request_or_ws:
+                raise HTTPException(500, "Request or WebSocket object missing")
 
-            # 2) Pull token_data from request.state
-            token_data = getattr(request.state, "token_data", None)
+            # Extract token data
+            token_data = getattr(request_or_ws.state, "token_data", None)
             if not token_data:
                 raise HTTPException(401, "Unauthorized")
 
-            # 3) Compare user ID
-            user_id_from_token = token_data.get("user_id")
-            # If your path param is "user_id" in your route, then it’s probably in kwargs:
+            user_id_from_token = token_data.get("sub")
             user_id_from_query = kwargs.get(user_id_param)
 
             if str(user_id_from_token) != str(user_id_from_query):
-                raise HTTPException(403, "Forbidden: Not your data")
+                raise HTTPException(403, f"Forbidden: Not your data \n"
+                                         f"user_id_from_token: {user_id_from_token} \n"
+                                         f"user_id_from_query: {user_id_from_query}")
 
             return await endpoint_func(*args, **kwargs)
         return wrapper
