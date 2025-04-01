@@ -3,5 +3,5 @@ uvicorn[standard]
 bcrypt
 pyjwt
 python-dotenv
-sqlalchemy==2.0.29
-psycopg2-binary
+sqlalchemy==2.0.29  # Ensure SQLAlchemy 2.x for full async support
+asyncpg  # Async PostgreSQL driver

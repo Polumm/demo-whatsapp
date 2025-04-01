@@ -46,7 +46,7 @@ services:
       - postgres-auth
     environment:
       APP_ENV: development
-      DATABASE_URL: postgresql://authuser:authpass@postgres-auth:5432/authdb
+      DATABASE_URL: postgresql+asyncpg://authuser:authpass@postgres-auth:5432/authdb
       ACCESS_SECRET_KEY: "access_secret_key"
 
   # ---------- Chat-Service + DB ----------

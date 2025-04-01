@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from routes.security import generate_tokens, verify_password
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from dependencies import get_db
-from sqlalchemy.orm import Session
 from models import User
 
 router = APIRouter()
@@ -12,12 +13,11 @@ class LoginRequest(BaseModel):
     password: str
 
 @router.post("/login")
-def login(data: LoginRequest, db: Session = Depends(get_db)):
-    """Validates user credentials against the database & returns JWT token."""
-    user = db.query(User).filter(User.name == data.username).first()
+async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.name == data.username))
+    user = result.scalar_one_or_none()
 
     if not user or not verify_password(data.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    tokens = generate_tokens(user.id, user.role)
-    return tokens
+    return generate_tokens(user.id, user.role)

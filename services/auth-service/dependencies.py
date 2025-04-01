@@ -1,20 +1,21 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from config import DATABASE_URL
 
-# Improve connection stability
-engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+# Create an async engine
+engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 
-# Ensure sessions are properly managed
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Use async sessionmaker
+AsyncSessionLocal = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+    autocommit=False
+)
 
-def get_db():
+async def get_db():
     """
-    Dependency for FastAPI routes to get a SQLAlchemy session.
-    Ensures connections are opened/closed properly.
+    Async dependency for FastAPI routes to get an Async SQLAlchemy session.
     """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    async with AsyncSessionLocal() as session:
+        yield session
