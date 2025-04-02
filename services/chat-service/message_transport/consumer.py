@@ -101,7 +101,7 @@ async def on_message(message: IncomingMessage):
             await send_push_notification(to_user, msg_data)
     else:
         # Group chat: deliver to each member's devices
-        participants = get_group_members(msg_data["conversation_id"])
+        participants = await get_group_members(msg_data["conversation_id"])
         for user_id in map(str, participants):
             sockets = connected_users.get(user_id)
             if sockets:

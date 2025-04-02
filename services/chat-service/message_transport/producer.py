@@ -99,7 +99,7 @@ async def _publish_group_or_generic(message_dict: dict):
     Possibly broadcast to each group member's node, etc.
     """
     conversation_id = message_dict["conversation_id"]
-    members = get_group_members(conversation_id)
+    members = await get_group_members(conversation_id)
 
     try:
         _, _, exchange = await get_publisher_connection()
