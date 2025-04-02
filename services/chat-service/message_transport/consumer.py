@@ -11,7 +11,6 @@ from aio_pika.abc import (
     AbstractQueue,
 )
 
-from message_transport.persistor import send_to_persistence_queue
 from dependencies import get_group_members
 from routes.notifications import send_push_notification
 from routes.websocket import connected_users
@@ -111,7 +110,6 @@ async def on_message(message: IncomingMessage):
             else:
                 await send_push_notification(user_id, msg_data)
 
-    await send_to_persistence_queue(msg_data)
     await message.ack()
 
 

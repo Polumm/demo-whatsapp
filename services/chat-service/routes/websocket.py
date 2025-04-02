@@ -5,6 +5,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 from message_transport.producer import publish_message
 from dependencies import update_presence_status
+from message_transport.persistor import send_to_persistence_queue
 
 router = APIRouter()
 
@@ -65,9 +66,8 @@ async def ws_client_server(websocket: WebSocket, user_id: str, device_id: str):
 
             # Publish to RabbitMQ asynchronously
             await publish_message(message_dict)
-
-            # Optionally, echo back to confirm
-            # await websocket.send_text("Message published!")
+            # Ensure message persistence and uniqueness
+            await send_to_persistence_queue(message_dict)
 
     except WebSocketDisconnect:
         print(f"[chat-service] User {user_id} on device {device_id} disconnected.")
