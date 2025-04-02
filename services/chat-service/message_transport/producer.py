@@ -55,60 +55,70 @@ async def get_publisher_connection():
 
 async def publish_message(message_dict: dict):
     """
-    Publish a message to our direct exchange with routing_key determined by presence.
+    Publishes a message to the appropriate node(s) using RabbitMQ routing.
+    Handles both direct and group messages.
     """
     to_user = message_dict.get("toUser")
+    sender_id = message_dict.get("sender_id")
+
+    # Group case
     if not to_user:
-        # e.g. group message scenario or broadcast
-        await _publish_group_or_generic(message_dict)
+        await _publish_group(message_dict)
         return
 
-    # Determine which node the receiving user is on
+    # Direct self-message? Skip if already delivered locally
+    if to_user == sender_id:
+        logging.info("[publish_message] Skipping self-message publish, handled locally.")
+        return
+
     receiver_node_ids = await get_nodes_for_user(to_user)
     if not receiver_node_ids:
-        # user offline or not found; handle offline scenario, store in DB, etc.
         logging.warning(f"[publish_message] No active devices found for user {to_user}")
         return
 
     try:
-        # Use the persistent connection
         _, _, exchange = await get_publisher_connection()
-
-        # Publish message
         body_str = json.dumps(message_dict)
+
         for node_id in receiver_node_ids:
             await exchange.publish(
                 Message(body_str.encode("utf-8"), delivery_mode=DeliveryMode.PERSISTENT),
                 routing_key=node_id,
             )
-        # We do NOT close the connection—it's persistent!
-
     except Exception as e:
-        # Optional: If you want to attempt a one-time reconnect, do so here:
-        # logging.error("[publish_message] Error: %s. Retrying once...", e)
-        # await force_reconnect()
-        # then try again
         raise HTTPException(
             status_code=500, detail=f"Error publishing message: {e}"
         )
 
 
-async def _publish_group_or_generic(message_dict: dict):
+
+async def _publish_group(message_dict: dict):
     """
-    Handle group messages or messages that have no single 'toUser'.
-    Possibly broadcast to each group member's node, etc.
+    Publishes group messages to each member's active nodes.
+    Adds 'toUser' dynamically per user for correct consumer routing.
+    Skips the sender to avoid redundant delivery.
     """
     conversation_id = message_dict["conversation_id"]
+    sender_id = message_dict.get("sender_id")
     members = await get_group_members(conversation_id)
 
     try:
         _, _, exchange = await get_publisher_connection()
-        body_str = json.dumps(message_dict)
 
         for user_id in members:
+            # Skip sending to self — consumer will handle it if needed
+            if str(user_id) == str(sender_id):
+                continue
+
             receiver_node_ids = await get_nodes_for_user(str(user_id))
             if not receiver_node_ids:
+                logging.info(f"[_publish_group] No active node for user {user_id}")
                 continue
+
+            # Add toUser for routing logic on consumer
+            message_for_user = message_dict.copy()
+            message_for_user["toUser"] = str(user_id)
+            body_str = json.dumps(message_for_user)
 
             for node_id in receiver_node_ids:
                 await exchange.publish(
@@ -117,4 +127,4 @@ async def _publish_group_or_generic(message_dict: dict):
                 )
 
     except Exception as e:
-        logging.error("[_publish_group_or_generic] Error publishing group msg: %s", e)
+        logging.error("[_publish_group] Error publishing group msg: %s", e)

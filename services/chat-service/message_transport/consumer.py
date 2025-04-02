@@ -79,6 +79,11 @@ async def consumer_loop():
 
 
 async def on_message(message: IncomingMessage):
+    """
+    This consumer receives messages published for this node.
+    Each message is targeted to a specific user.
+    We only need to deliver it to all of the user's WebSockets on this node.
+    """
     msg_str = message.body.decode("utf-8")
     print(f"[chat-consumer] Received raw message: {msg_str}")
 
@@ -90,35 +95,28 @@ async def on_message(message: IncomingMessage):
         return
 
     to_user = msg_data.get("toUser")
+    if not to_user:
+        print("[chat-consumer] Message missing 'toUser', skipping.")
+        await message.ack()
+        return
 
-    if to_user:
-        # Direct chat: deliver to all devices
-        sockets = connected_users.get(to_user)
-        if sockets:
-            for device_id, ws in sockets.items():
+    # Deliver to all connected devices for this user on this node
+    sockets = connected_users.get(to_user)
+    if sockets:
+        for device_id, ws in sockets.items():
+            try:
                 await _deliver_message(ws, msg_data, to_user, device_id)
-        else:
-            await send_push_notification(to_user, msg_data)
+            except Exception as e:
+                print(f"[chat-consumer] Failed to deliver to {to_user}:{device_id} -> {e}")
     else:
-        # Group chat: deliver to each member's devices
-        participants = await get_group_members(msg_data["conversation_id"])
-        for user_id in map(str, participants):
-            sockets = connected_users.get(user_id)
-            if sockets:
-                for device_id, ws in sockets.items():
-                    await _deliver_message(ws, msg_data, user_id, device_id)
-            else:
-                await send_push_notification(user_id, msg_data)
+        print(f"[chat-consumer] No active devices for user {to_user} on this node.")
 
     await message.ack()
 
 
 async def _deliver_message(ws, msg_data, user_id, device_id):
     try:
-        if ws.client_state == WebSocketState.CONNECTED:
-            await ws.send_text(json.dumps(msg_data))
-            print(f"[chat-consumer] Delivered to {user_id}:{device_id}")
-        else:
-            print(f"[chat-consumer] Skipped closed socket {user_id}:{device_id}")
+        await ws.send_text(json.dumps(msg_data))
+        print(f"[chat-consumer] Delivered to {user_id}:{device_id}")
     except Exception as e:
-        print(f"[chat-consumer] Failed sending to {user_id}:{device_id} - {e}")
+        print(f"[chat-consumer] Failed to send message to {user_id}:{device_id} -> {e}")
