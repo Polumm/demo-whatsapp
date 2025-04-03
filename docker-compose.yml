@@ -74,7 +74,7 @@ services:
     restart: always
     depends_on:
       rabbitmq:
-        condition: service_healthy  # ✅ Only RabbitMQ is checked for readiness
+        condition: service_healthy  # RabbitMQ is checked for readiness
       redis:
         condition: service_started
       postgres-chat:
@@ -95,7 +95,7 @@ services:
     restart: always
     depends_on:
       rabbitmq:
-        condition: service_healthy  # ✅ Only RabbitMQ is checked for readiness
+        condition: service_healthy  # RabbitMQ is checked for readiness
       redis:
         condition: service_started
       postgres-chat:
@@ -140,20 +140,7 @@ services:
     depends_on:
       - haproxy-lb
 
-  # ---------- Presence-Service + DB ----------
-  # postgres-presence:
-  #   image: postgres:latest
-  #   container_name: postgres-presence
-  #   restart: always
-  #   environment:
-  #     POSTGRES_USER: presenceuser
-  #     POSTGRES_PASSWORD: presencepass
-  #     POSTGRES_DB: presencedb
-  #   ports:
-  #     - "5435:5432"
-  #   volumes:
-  #     - postgres_presence_data:/var/lib/postgresql/data
-
+  # ---------- Presence-Service (based on Redis) ----------
   presence-service:
     build: ./services/presence-service
     container_name: presence-service
@@ -190,4 +177,3 @@ services:
 volumes:
   postgres_auth_data:
   postgres_chat_data:
-  postgres_presence_data:
