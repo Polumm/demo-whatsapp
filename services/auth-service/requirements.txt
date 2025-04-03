@@ -1,7 +1,7 @@
-fastapi
-uvicorn[standard]
-bcrypt
-pyjwt
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+bcrypt==4.3.0
+pyjwt==2.8.0
 python-dotenv
 sqlalchemy==2.0.29  # Ensure SQLAlchemy 2.x for full async support
-asyncpg  # Async PostgreSQL driver
+asyncpg==0.30.0  # Async PostgreSQL driver
