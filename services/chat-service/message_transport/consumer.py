@@ -10,12 +10,8 @@ from aio_pika.abc import (
     AbstractExchange,
     AbstractQueue,
 )
-
-from dependencies import get_group_members
-from routes.notifications import send_push_notification
 from routes.websocket import connected_users
 from fastapi.websockets import WebSocketState
-
 from config import (
     EXCHANGE_NAME,
     NODE_ID,
@@ -29,33 +25,26 @@ consumer_channel: Optional[AbstractChannel] = None
 consumer_exchange: Optional[AbstractExchange] = None
 consumer_queue: Optional[AbstractQueue] = None
 
-
 async def get_consumer_connection():
     global consumer_connection, consumer_channel, consumer_exchange, consumer_queue
-
     if not consumer_connection or consumer_connection.is_closed:
         logging.info("[chat-consumer] Establishing a new connection...")
         consumer_connection = await connect_robust(host=RABBIT_HOST, port=RABBIT_PORT)
-
     if not consumer_channel or consumer_channel.is_closed:
         logging.info("[chat-consumer] Establishing a new channel...")
         consumer_channel = await consumer_connection.channel()
-
     if not consumer_exchange or consumer_exchange.is_closed:
         logging.info("[chat-consumer] Declaring the exchange...")
         consumer_exchange = await consumer_channel.declare_exchange(
             EXCHANGE_NAME, ExchangeType.DIRECT, durable=True
         )
-
     if not consumer_queue or consumer_queue.is_closed:
         queue_name = f"{NODE_ID}-queue"
         logging.info("[chat-consumer] Declaring the queue: %s", queue_name)
         consumer_queue = await consumer_channel.declare_queue(queue_name, durable=True)
         logging.info("[chat-consumer] Binding queue to exchange with routing_key: %s", NODE_ID)
         await consumer_queue.bind(consumer_exchange, routing_key=NODE_ID)
-
     return consumer_connection, consumer_channel, consumer_exchange, consumer_queue
-
 
 async def consumer_loop():
     retry_delay = 1
@@ -65,7 +54,6 @@ async def consumer_loop():
             logging.info("[chat-consumer] Waiting for messages...")
             await queue.consume(on_message, no_ack=False)
             await asyncio.Future()
-
         except asyncio.CancelledError:
             logging.info("[chat-consumer] Consumer task cancelled. Closing connection.")
             break
@@ -77,46 +65,58 @@ async def consumer_loop():
             logging.error("[chat-consumer] Consumer crashed: %s", e)
             raise
 
-
 async def on_message(message: IncomingMessage):
     """
-    This consumer receives messages published for this node.
-    Each message is targeted to a specific user.
-    We only need to deliver it to all of the user's WebSockets on this node.
+    Each message is a Node Message intended for this node.
+    We expect: {
+      "event_type": "chat_message",
+      "payload": {...},
+      "target_devices": [
+         {"user_id": "...", "device_id": "..."},
+         ...
+      ]
+    }
+    We deliver 'payload' to each local device's websocket (if connected).
     """
     msg_str = message.body.decode("utf-8")
     print(f"[chat-consumer] Received raw message: {msg_str}")
 
     try:
-        msg_data = json.loads(msg_str)
+        node_msg = json.loads(msg_str)
     except json.JSONDecodeError as e:
-        print("[chat-consumer] JSON parse error:", e)
+        print(f"[chat-consumer] JSON parse error: {e}")
         await message.ack()
         return
 
-    to_user = msg_data.get("toUser")
-    if not to_user:
-        print("[chat-consumer] Message missing 'toUser', skipping.")
+    # Basic validation
+    event_type = node_msg.get("event_type")
+    payload = node_msg.get("payload")
+    targets = node_msg.get("target_devices", [])
+
+    if event_type != "chat_message" or not payload or not targets:
+        print("[chat-consumer] Invalid node message format. Acknowledging.")
         await message.ack()
         return
 
-    # Deliver to all connected devices for this user on this node
-    sockets = connected_users.get(to_user)
-    if sockets:
-        for device_id, ws in sockets.items():
-            try:
-                await _deliver_message(ws, msg_data, to_user, device_id)
-            except Exception as e:
-                print(f"[chat-consumer] Failed to deliver to {to_user}:{device_id} -> {e}")
-    else:
-        print(f"[chat-consumer] No active devices for user {to_user} on this node.")
+    # Deliver to each device in 'target_devices'
+    for t in targets:
+        user_id = t.get("user_id")
+        device_id = t.get("device_id")
+        if not user_id or not device_id:
+            continue
+
+        user_sockets = connected_users.get(user_id)
+        if not user_sockets:
+            continue  # user not connected at all on this node
+        ws = user_sockets.get(device_id)
+        if not ws:
+            continue  # that device not connected
+
+        # Attempt to send
+        try:
+            await ws.send_text(json.dumps(payload))
+            print(f"[chat-consumer] Delivered to {user_id}:{device_id}")
+        except Exception as e:
+            print(f"[chat-consumer] Delivery error to {user_id}:{device_id} -> {e}")
 
     await message.ack()
-
-
-async def _deliver_message(ws, msg_data, user_id, device_id):
-    try:
-        await ws.send_text(json.dumps(msg_data))
-        print(f"[chat-consumer] Delivered to {user_id}:{device_id}")
-    except Exception as e:
-        print(f"[chat-consumer] Failed to send message to {user_id}:{device_id} -> {e}")

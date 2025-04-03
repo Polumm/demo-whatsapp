@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Dict, List
 import json
 from redis.asyncio import Redis
 import httpx
@@ -32,6 +33,7 @@ async def get_db():
 
 # --- Async Redis Client ---
 redis_pool = Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+
 
 # --- Presence Lookup ---
 async def get_nodes_for_user(user_id: str):
@@ -106,6 +108,63 @@ async def update_presence_status(user_id: str, status: str, device_id: str):
                 print(f"[update_presence_status] Failed ({response.status_code}): {response.text}")
     except Exception as e:
         print(f"[update_presence_status] Error: {e}")
+
+
+async def get_devices_for_user(user_id: str) -> dict:
+    """
+    Returns {device_id: node_id} for all devices of user_id that are 'online'.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{PRESENCE_SERVICE_URL}/presence/{user_id}")
+            if r.status_code == 200:
+                data = r.json()
+                return {
+                    entry["device_id"]: entry["node_id"]
+                    for entry in data
+                    if entry.get("status") == "online"
+                }
+            else:
+                return {}
+    except Exception as e:
+        print("[get_devices_for_user] Error:", e)
+        return {}
+
+
+async def get_node_map_for_users(
+    user_ids: List[str],
+    sender_id: str = None,
+    origin_device_id: str = None
+) -> Dict[str, List[Dict[str, str]]]:
+    """
+    Calls presence-service's /presence/nodes endpoint with user_ids,
+    plus optionally sender_id & origin_device_id, and returns the
+    node_id -> [ {user_id, device_id}, ... ] structure.
+    """
+    if not user_ids:
+        return {}
+
+    base_url = f"{PRESENCE_SERVICE_URL}/presence/nodes"
+    # Build query params
+    params = {
+        "user_ids": ",".join(user_ids)
+    }
+    if sender_id:
+        params["sender_id"] = sender_id
+    if origin_device_id:
+        params["origin_device_id"] = origin_device_id
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(base_url, params=params)
+            if resp.status_code == 200:
+                return resp.json()  # This is the node_map from presence-service
+            else:
+                print(f"[get_node_map_for_users] Error {resp.status_code}: {resp.text}")
+                return {}
+    except Exception as e:
+        print("[get_node_map_for_users] Exception:", e)
+        return {}
 
 
 # --- Synchronize Messages from Redis or Redis + Postgres---
