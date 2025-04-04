@@ -7,7 +7,6 @@ from websockets.exceptions import ConnectionClosed
 from pathlib import Path
 from rich import print
 from datetime import datetime
-import dateutil.parser
 import dateutil.relativedelta
 from dateutil import tz
 import re

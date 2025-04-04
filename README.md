@@ -14,17 +14,19 @@ A scalable, real-time messaging system supporting multi-device delivery, group c
   - [🔧 Technical Highlights](#-technical-highlights)
   - [📦 System Flow Example](#-system-flow-example)
   - [🧪 Demo WhatsApp Gateway - Testing Guide](#-demo-whatsapp-gateway---testing-guide)
-    - [📦 Prerequisites](#-prerequisites)
+    - [🦆Build and Run](#build-and-run)
     - [🚀 1. Login (Get JWT)](#-1-login-get-jwt)
     - [🌐 2. WebSocket Testing with `wscat`](#-2-websocket-testing-with-wscat)
     - [🔄 3. Sync Messages (GET `/sync`)](#-3-sync-messages-get-sync)
     - [💬 4. Create a Conversation](#-4-create-a-conversation)
     - [💻 5. Use `demo_client.py` CLI (Recommended)](#-5-use-demo_clientpy-cli-recommended)
+      - [📦 Prerequisites](#-prerequisites)
     - [🧠 Notes](#-notes)
     - [📂 Files of Interest](#-files-of-interest)
   - [🧱 Microservice Structure](#-microservice-structure)
     - [🧩 Core Services](#-core-services)
     - [🧪 Infrastructure](#-infrastructure)
+
 
 ---
 
@@ -120,17 +122,15 @@ This section describes how to test the Gateway service and downstream Chat APIs 
 
 ---
 
-### 📦 Prerequisites
+Here’s the improved Markdown snippet for your prerequisites section:
 
-- Docker installed
-- Build the project:
+### 🦆Build and Run
+
+Build the project:
 
 ```bash
-./build
-cd tests
+./build.sh
 ```
-
----
 
 ### 🚀 1. Login (Get JWT)
 
@@ -198,6 +198,18 @@ curl -X POST http://localhost:8001/api/conversations \
 ---
 
 ### 💻 5. Use `demo_client.py` CLI (Recommended)
+
+#### 📦 Prerequisites
+
+- ✅ **Docker Environment**: Ensure Docker is installed and running.
+- ✅ **Python Environment**: Make sure dependencies for `demo_client.py` are installed.
+
+Install Python requirements if needed:
+
+```bash
+python -m venv .venv
+pip install -r tests/requirements.txt
+```
 
 ✅ Login:
 
